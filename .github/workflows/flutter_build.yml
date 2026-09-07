@@ -1,0 +1,62 @@
+name: Flutter Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+          cache: true
+      
+      - name: Install dependencies
+        run: |
+          cd solar_clock_app
+          flutter pub get
+      
+      - name: Analyze code
+        run: |
+          cd solar_clock_app
+          flutter analyze
+      
+      - name: Run tests
+        run: |
+          cd solar_clock_app
+          flutter test
+      
+      - name: Build APK
+        run: |
+          cd solar_clock_app
+          flutter build apk --release
+      
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: solar_clock_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+      
+      - name: Build App Bundle (for Google Play)
+        run: |
+          cd solar_clock_app
+          flutter build appbundle --release
+      
+      - name: Upload App Bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-appbundle
+          path: solar_clock_app/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30

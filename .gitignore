@@ -1,71 +1,12 @@
 ```
-# Flutter/Dart
-.dart_tool/
-.build/
-.pub/
-flutter/
-packages/
-
-# Android
-android/.gradle/
-android/build/
-android/app/build/
-*.apk
-*.aar
-*.so
-
-# iOS
-ios/Pods/
-ios/build/
-*.ipa
-
 # Dependencies
 node_modules/
-**/node_modules/
 
-# Compiled files
-*.pyc
-*.class
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
+# Editors
+.vscode/
 
-# Build artifacts
-dist/
-build/
-target/
-coverage/
-htmlcov/
-.coverage
-
-# Virtual environments
-venv/
-.venv/
+# Environment
 .env
 .env.local
 .env.*
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# System files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Cache
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-.gradle/
 ```
