@@ -15,7 +15,7 @@ dependencies:
   geocoding: ^2.1.1
   
   # Solar calculations
-  sun_calc: ^0.2.2
+  sunrise_sunset_calc: ^3.0.0
   
   # State management
   provider: ^6.1.1
