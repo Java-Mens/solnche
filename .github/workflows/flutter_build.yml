@@ -2,9 +2,9 @@ name: Flutter Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master-slave ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master-slave ]
   workflow_dispatch: # Allows manual trigger from GitHub Actions UI
 
 jobs:
