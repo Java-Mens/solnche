@@ -1,82 +1,224 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
 
 /// Service for managing local notifications
+/// Implements FR-20, FR-21, FR-22, FR-23
 class NotificationService {
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
   
   bool _isInitialized = false;
   
-  /// Initialize notification service
+  /// Channel IDs for different notification types
+  static const String _solarTimeChannelId = 'solar_time_channel';
+  static const String _solarNoonChannelId = 'solar_noon_channel';
+  static const String _sunriseSunsetChannelId = 'sunrise_sunset_channel';
+  
+  /// Initialize notification service with timezone support
   Future<void> initialize() async {
     if (_isInitialized) return;
+    
+    // Initialize timezone database
+    tz.initializeTimeZones();
     
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
+      requestCriticalPermission: false,
+    );
+    const linuxSettings = LinuxInitializationSettings(
+      defaultActionName: 'Open Solar Clock',
     );
     
     const settings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
+      linux: linuxSettings,
     );
     
-    await _notifications.initialize(settings);
+    await _notifications.initialize(
+      settings,
+      onDidReceiveNotificationResponse: _onNotificationTapped,
+      onDidReceiveBackgroundNotificationResponse: _onBackgroundNotificationTapped,
+    );
+    
+    // Create notification channels
+    await _createNotificationChannels();
     _isInitialized = true;
   }
   
-  /// Request notification permissions
+  /// Create notification channels for Android
+  Future<void> _createNotificationChannels() async {
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    
+    if (androidPlugin != null) {
+      // Solar time updates channel (low priority, ongoing)
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _solarTimeChannelId,
+          'Солнечное время',
+          description: 'Постоянное уведомление с текущим солнечным временем',
+          importance: Importance.low,
+          priority: Priority.low,
+          showBadge: false,
+          enableVibration: false,
+          playSound: false,
+        ),
+      );
+      
+      // Solar noon events channel (default priority)
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _solarNoonChannelId,
+          'Солнечный зенит',
+          description: 'Ежедневное уведомление о солнечном полдне',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          showBadge: true,
+          enableVibration: true,
+        ),
+      );
+      
+      // Sunrise/sunset events channel
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _sunriseSunsetChannelId,
+          'Восход и закат',
+          description: 'Уведомления о восходе и закате солнца',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          showBadge: true,
+          enableVibration: false,
+        ),
+      );
+    }
+  }
+  
+  /// Handle notification tap in foreground
+  void _onNotificationTapped(NotificationResponse response) {
+    print('Notification tapped: ${response.payload}');
+    // Can navigate to specific screen based on payload
+  }
+  
+  /// Handle notification tap from background/terminated state
+  @pragma('vm:entry-point')
+  static void _onBackgroundNotificationTapped(NotificationResponse response) {
+    print('Background notification tapped: ${response.payload}');
+  }
+  
+  /// Request notification permissions (Android 13+)
   Future<bool> requestPermissions() async {
     final androidImpl = _notifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     
     if (androidImpl != null) {
       final granted = await androidImpl.requestNotificationsPermission();
+      if (granted == null || !granted) {
+        return false;
+      }
+    }
+    
+    final iosImpl = _notifications.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    
+    if (iosImpl != null) {
+      final granted = await iosImpl.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+        criticalAlert: false,
+      );
       return granted ?? false;
     }
     
     return true;
   }
   
-  /// Show a notification with solar time info
+  /// Check if notifications are enabled
+  Future<bool> areNotificationsEnabled() async {
+    final androidImpl = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    
+    if (androidImpl != null) {
+      final enabled = await androidImpl.areNotificationsEnabled();
+      return enabled ?? false;
+    }
+    
+    return true;
+  }
+  
+  /// Show a persistent notification with solar time info (FR-21)
+  /// Used for foreground service to keep app alive
   Future<void> showSolarTimeNotification({
     required String solarTime,
     required String location,
+    required String utcOffset,
   }) async {
     if (!_isInitialized) {
       await initialize();
     }
     
-    const androidDetails = AndroidNotificationDetails(
-      'solar_time_channel',
+    final androidDetails = AndroidNotificationDetails(
+      _solarTimeChannelId,
       'Солнечное время',
-      channelDescription: 'Уведомления о солнечном времени',
+      channelDescription: 'Постоянное уведомление с текущим солнечным временем',
       importance: Importance.low,
       priority: Priority.low,
       icon: '@mipmap/ic_launcher',
       ongoing: true,
       autoCancel: false,
+      showWhen: false,
+      category: AndroidNotificationCategory.service,
+      visibility: NotificationVisibility.public,
+      color: const Color(0xFFFF9800),
+      styleInformation: const BigTextStyleInformation(
+        '',
+        contentTitle: 'Солнечное время',
+        summaryText: 'Обновляется каждую секунду',
+      ),
     );
     
     const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
+      presentAlert: false,
+      presentBadge: false,
       presentSound: false,
+      interruptionLevel: InterruptionLevel.passive,
     );
     
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
     
     await _notifications.show(
       0,
-      'Солнечное время: $solarTime',
-      'Местоположение: $location',
+      '☀️ $solarTime ($utcOffset)',
+      '📍 $location',
       details,
+      payload: 'solar_time_update',
     );
+  }
+  
+  /// Update existing solar time notification
+  Future<void> updateSolarTimeNotification({
+    required String solarTime,
+    required String location,
+    required String utcOffset,
+  }) async {
+    await showSolarTimeNotification(
+      solarTime: solarTime,
+      location: location,
+      utcOffset: utcOffset,
+    );
+  }
+  
+  /// Cancel solar time notification
+  Future<void> cancelSolarTimeNotification() async {
+    await _notifications.cancel(0);
   }
   
   /// Cancel all notifications
@@ -84,40 +226,55 @@ class NotificationService {
     await _notifications.cancelAll();
   }
   
-  /// Show daily solar noon notification
+  /// Schedule daily solar noon notification (FR-22)
   Future<void> scheduleSolarNoonNotification({
     required int hour,
     required int minute,
+    bool enableVibration = true,
+    bool enableSound = true,
   }) async {
     if (!_isInitialized) {
       await initialize();
     }
     
-    const androidDetails = AndroidNotificationDetails(
-      'solar_noon_channel',
+    final androidDetails = AndroidNotificationDetails(
+      _solarNoonChannelId,
       'Солнечный зенит',
-      channelDescription: 'Ежедневное уведомление о солнечном зените',
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
+      channelDescription: 'Ежедневное уведомление о солнечном полдне',
+      importance: Importance.high,
+      priority: Priority.high,
       icon: '@mipmap/ic_launcher',
+      enableVibration: enableVibration,
+      playSound: enableSound,
+      visibility: NotificationVisibility.public,
+      color: const Color(0xFFFFC107),
     );
     
-    const iosDetails = DarwinNotificationDetails(
+    final iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: true,
+      presentSound: enableSound,
+      interruptionLevel: InterruptionLevel.active,
     );
     
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
     
+    // Schedule for next occurrence of specified time
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduledDate = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    
+    if (scheduledDate.isBefore(now)) {
+      scheduledDate = scheduledDate.add(const Duration(days: 1));
+    }
+    
     await _notifications.zonedSchedule(
       1,
-      'Солнечный зенит',
-      'Сейчас солнечный полдень в вашей локации',
-      _nextInstanceOfTime(hour, minute),
+      '☀️ Солнечный зенит',
+      'Сейчас солнечный полдень в вашей локации! Время: $hour:${minute.toString().padLeft(2, '0')}',
+      scheduledDate,
       details,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
@@ -126,12 +283,110 @@ class NotificationService {
     );
   }
   
-  DateTime _nextInstanceOfTime(int hour, int minute) {
-    final now = DateTime.now();
-    var scheduledDate = DateTime(now.year, now.month, now.day, hour, minute);
-    if (scheduledDate.isBefore(now)) {
-      scheduledDate = scheduledDate.add(const Duration(days: 1));
+  /// Schedule sunrise notification (FR-23)
+  Future<void> scheduleSunriseNotification({
+    required DateTime sunriseTime,
+    bool enableVibration = false,
+    bool enableSound = true,
+  }) async {
+    if (!_isInitialized) {
+      await initialize();
     }
-    return scheduledDate;
+    
+    final tzDate = tz.TZDateTime.from(sunriseTime, tz.local);
+    
+    final androidDetails = AndroidNotificationDetails(
+      _sunriseSunsetChannelId,
+      'Восход и закат',
+      channelDescription: 'Уведомления о восходе и закате солнца',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: '@mipmap/ic_launcher',
+      enableVibration: enableVibration,
+      playSound: enableSound,
+      color: const Color(0xFFFF5722),
+    );
+    
+    final iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: false,
+      presentSound: enableSound,
+      interruptionLevel: InterruptionLevel.passive,
+    );
+    
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notifications.zonedSchedule(
+      2,
+      '🌅 Восход солнца',
+      'Солнце взошло! Хорошего дня!',
+      tzDate,
+      details,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+  
+  /// Schedule sunset notification (FR-23)
+  Future<void> scheduleSunsetNotification({
+    required DateTime sunsetTime,
+    bool enableVibration = false,
+    bool enableSound = true,
+  }) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+    
+    final tzDate = tz.TZDateTime.from(sunsetTime, tz.local);
+    
+    final androidDetails = AndroidNotificationDetails(
+      _sunriseSunsetChannelId,
+      'Восход и закат',
+      channelDescription: 'Уведомления о восходе и закате солнца',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: '@mipmap/ic_launcher',
+      enableVibration: enableVibration,
+      playSound: enableSound,
+      color: const Color(0xFF673AB7),
+    );
+    
+    final iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: false,
+      presentSound: enableSound,
+      interruptionLevel: InterruptionLevel.passive,
+    );
+    
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notifications.zonedSchedule(
+      3,
+      '🌇 Закат солнца',
+      'Солнце село! Доброго вечера!',
+      tzDate,
+      details,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+  
+  /// Cancel all scheduled notifications
+  Future<void> cancelAllScheduledNotifications() async {
+    await _notifications.cancelAll();
+  }
+  
+  /// Get pending notifications count
+  Future<int> getPendingNotificationsCount() async {
+    final pending = await _notifications.pendingNotificationRequests();
+    return pending.length;
   }
 }

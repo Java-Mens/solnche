@@ -3,7 +3,8 @@ import '../models/location_point.dart';
 import '../services/solar_time_service.dart';
 
 /// Widget for comparing solar times between two locations
-class SolarTimeComparisonWidget extends StatelessWidget {
+/// Implements FR-13, FR-14, FR-15
+class SolarTimeComparisonWidget extends StatefulWidget {
   final LocationPoint location1;
   final LocationPoint location2;
   final String? label1;
@@ -18,23 +19,67 @@ class SolarTimeComparisonWidget extends StatelessWidget {
   }) : super(key: key);
   
   @override
+  State<SolarTimeComparisonWidget> createState() => _SolarTimeComparisonWidgetState();
+}
+
+class _SolarTimeComparisonWidgetState extends State<SolarTimeComparisonWidget> {
+  late Timer _timer;
+  late DateTime _solarTime1;
+  late DateTime _solarTime2;
+  late String _utcOffset1;
+  late String _utcOffset2;
+  
+  final SolarTimeService _solarTimeService = SolarTimeService();
+  
+  @override
+  void initState() {
+    super.initState();
+    _updateTimes();
+    // Update every second per FR-02
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _updateTimes();
+    });
+  }
+  
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+  
+  void _updateTimes() {
+    setState(() {
+      _solarTime1 = _solarTimeService.calculateApparentSolarTime(
+        latitude: widget.location1.latitude,
+        longitude: widget.location1.longitude,
+      );
+      
+      _solarTime2 = _solarTimeService.calculateApparentSolarTime(
+        latitude: widget.location2.latitude,
+        longitude: widget.location2.longitude,
+      );
+      
+      final offset1Seconds = _solarTimeService.calculateUTCOffsetSeconds(
+        latitude: widget.location1.latitude,
+        longitude: widget.location1.longitude,
+      );
+      _utcOffset1 = _solarTimeService.formatUTCOffset(offset1Seconds);
+      
+      final offset2Seconds = _solarTimeService.calculateUTCOffsetSeconds(
+        latitude: widget.location2.latitude,
+        longitude: widget.location2.longitude,
+      );
+      _utcOffset2 = _solarTimeService.formatUTCOffset(offset2Seconds);
+    });
+  }
+  
+  @override
   Widget build(BuildContext context) {
-    final solarTimeService = SolarTimeService();
-    
-    final solarTime1 = solarTimeService.calculateApparentSolarTime(
-      latitude: location1.latitude,
-      longitude: location1.longitude,
-    );
-    
-    final solarTime2 = solarTimeService.calculateApparentSolarTime(
-      latitude: location2.latitude,
-      longitude: location2.longitude,
-    );
-    
-    final timeDifference = solarTime2.difference(solarTime1);
+    final timeDifference = _solarTime2.difference(_solarTime1);
     final absMinutes = timeDifference.inMinutes.abs();
     final hours = (absMinutes / 60).floor();
     final minutes = absMinutes % 60;
+    final seconds = timeDifference.inSeconds.abs() % 60;
     
     return Card(
       elevation: 4,
@@ -57,9 +102,10 @@ class SolarTimeComparisonWidget extends StatelessWidget {
                 Expanded(
                   child: _buildLocationCard(
                     context,
-                    location: location1,
-                    label: label1 ?? 'Точка 1',
-                    solarTime: solarTime1,
+                    location: widget.location1,
+                    label: widget.label1 ?? 'Точка 1',
+                    solarTime: _solarTime1,
+                    utcOffset: _utcOffset1,
                     isLeft: true,
                   ),
                 ),
@@ -67,16 +113,17 @@ class SolarTimeComparisonWidget extends StatelessWidget {
                 Expanded(
                   child: _buildLocationCard(
                     context,
-                    location: location2,
-                    label: label2 ?? 'Точка 2',
-                    solarTime: solarTime2,
+                    location: widget.location2,
+                    label: widget.label2 ?? 'Точка 2',
+                    solarTime: _solarTime2,
+                    utcOffset: _utcOffset2,
                     isLeft: false,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            _buildDifferenceCard(context, hours, minutes, timeDifference.inMinutes),
+            _buildDifferenceCard(context, hours, minutes, seconds, timeDifference.inMinutes),
           ],
         ),
       ),
@@ -88,6 +135,7 @@ class SolarTimeComparisonWidget extends StatelessWidget {
     required LocationPoint location,
     required String label,
     required DateTime solarTime,
+    required String utcOffset,
     required bool isLeft,
   }) {
     return Card(
@@ -114,12 +162,28 @@ class SolarTimeComparisonWidget extends StatelessWidget {
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: isLeft ? Colors.blue[700] : Colors.orange[700],
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
             const SizedBox(height: 4),
             Text(
               'Солнечное время',
               style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: isLeft ? Colors.blue[100] : Colors.orange[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                utcOffset,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: isLeft ? Colors.blue[700] : Colors.orange[700],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ],
         ),
@@ -131,6 +195,7 @@ class SolarTimeComparisonWidget extends StatelessWidget {
     BuildContext context,
     int hours,
     int minutes,
+    int seconds,
     int totalMinutes,
   ) {
     final isPositive = totalMinutes >= 0;
@@ -153,10 +218,11 @@ class SolarTimeComparisonWidget extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '${isPositive ? '+' : '-'}${hours > 0 ? '$hours ч ' : ''}${minutes} мин',
+            '${isPositive ? '+' : '-'}${hours > 0 ? '$hours ч ' : ''}${minutes} мин ${seconds} сек',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
               color: isPositive ? Colors.green[700] : Colors.red[700],
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           const SizedBox(height: 4),
@@ -174,6 +240,6 @@ class SolarTimeComparisonWidget extends StatelessWidget {
   }
   
   String _formatTime(DateTime time) {
-    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
   }
 }
