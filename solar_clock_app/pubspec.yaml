@@ -1,0 +1,47 @@
+name: solar_clock_app
+description: A Flutter application that displays local apparent solar time based on user location with comparison feature.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Location services
+  geolocator: ^10.1.0
+  geocoding: ^2.1.1
+  
+  # Solar calculations
+  sun_calc: ^0.2.2
+  
+  # State management
+  provider: ^6.1.1
+  
+  # Permissions
+  permission_handler: ^11.1.0
+  
+  # Notifications
+  flutter_local_notifications: ^16.3.0
+  
+  # Shared preferences for storing settings
+  shared_preferences: ^2.2.2
+  
+  # Home screen widget (Android)
+  home_widget: ^0.4.1
+  
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  
+  # Assets if needed
+  # assets:
+  #   - images/
