@@ -24,7 +24,7 @@ class SolarTimeComparisonWidget extends StatefulWidget {
 }
 
 class _SolarTimeComparisonWidgetState extends State<SolarTimeComparisonWidget> {
-  late Timer _timer;
+  Timer? _timer;
   late DateTime _solarTime1;
   late DateTime _solarTime2;
   late String _utcOffset1;
@@ -44,7 +44,7 @@ class _SolarTimeComparisonWidgetState extends State<SolarTimeComparisonWidget> {
   
   @override
   void dispose() {
-    _timer.cancel();
+    _timer?.cancel();
     super.dispose();
   }
   

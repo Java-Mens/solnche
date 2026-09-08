@@ -1,35 +1,35 @@
 ```
 # Flutter/Dart specific
 .dart_tool/
-.build/
 .packages
-flutter_export_environment.sh
+*.g.dart
+*.freezed.dart
+*.config.dart
 
-# Dependencies
-.pub/
-pubspec.lock
+# Build outputs
+build/
+**/ios/Flutter/.last_build_id
 
-# Logs
-*.log
-**/logs
-
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# IDE
+# IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
 
+# Logs
+*.log
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+node_modules/
+vendor/
+
 # OS generated files
 .DS_Store
 Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
 ```

@@ -154,7 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(
             title: const Text('Ручной ввод координат'),
             subtitle: _useManualLocation
-                ? const Text('Широта: $_manualLat°, Долгота: $_manualLon°')
+                ? Text('Широта: $_manualLat°, Долгота: $_manualLon°')
                 : const Text('Использовать GPS устройства'),
             value: _useManualLocation,
             onChanged: (value) {

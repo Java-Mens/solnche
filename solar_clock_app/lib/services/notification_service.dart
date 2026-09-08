@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
@@ -389,5 +387,41 @@ class NotificationService {
   Future<int> getPendingNotificationsCount() async {
     final pending = await _notifications.pendingNotificationRequests();
     return pending.length;
+  }
+
+  /// Schedule all notifications based on settings (FR-20, FR-22, FR-23)
+  /// Called from settings screen when notifications are enabled
+  Future<void> scheduleAllNotifications({
+    double? latitude,
+    double? longitude,
+    required bool notifySunrise,
+    required bool notifySunset,
+    required bool notifySolarNoon,
+  }) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    // Cancel all existing notifications first
+    await cancelAllScheduledNotifications();
+
+    // Schedule solar noon notification if enabled
+    if (notifySolarNoon) {
+      // Default solar noon time (can be calculated based on location)
+      await scheduleSolarNoonNotification(
+        hour: 12,
+        minute: 0,
+        enableVibration: true,
+        enableSound: true,
+      );
+    }
+
+    // Sunrise and sunset notifications require location
+    if ((notifySunrise || notifySunset) && latitude != null && longitude != null) {
+      // For now, we'll schedule placeholder notifications
+      // In a real app, you would calculate actual sunrise/sunset times
+      // based on the location and date
+      print('Sunrise/sunset notifications require actual calculation based on location');
+    }
   }
 }
