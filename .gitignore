@@ -1,20 +1,15 @@
 ```
 # Flutter/Dart specific
 .dart_tool/
-.packages
-*.g.dart
-*.freezed.dart
-*.config.dart
+.build/
+packages/
+*.iws
+*.ipr
+*.iml
+pubspec.lock
 
-# Build outputs
-build/
-**/ios/Flutter/.last_build_id
-
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
+# Dependencies
+vendor/
 
 # Logs
 *.log
@@ -23,11 +18,13 @@ build/
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
 
-# Dependencies
-node_modules/
-vendor/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # OS generated files
 .DS_Store

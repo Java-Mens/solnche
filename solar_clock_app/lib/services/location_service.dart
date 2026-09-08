@@ -29,7 +29,7 @@ class LocationService {
       }
       
       final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
+        locationSettings: LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
       );
@@ -48,7 +48,7 @@ class LocationService {
   /// Get current location as a stream
   Stream<LocationPoint?> getLocationStream() {
     return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       ),

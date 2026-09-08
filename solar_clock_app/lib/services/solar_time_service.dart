@@ -131,7 +131,7 @@ class SolarTimeService {
     final MRad = _toRadians(M);
     
     // Eccentricity of Earth's orbit
-    final e = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T;
+    final eccentricity = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T;
     
     // Obliquity of the ecliptic
     double epsilon = 23.43929111 - 0.013004167 * T - 
@@ -191,7 +191,7 @@ class SolarTimeService {
     final MRad = _toRadians(M);
     
     // Eccentricity of Earth's orbit
-    final e = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T;
+    final eccentricity = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T;
     
     // Equation of center with all significant terms
     final C = (1.914602 - 0.004817 * T - 0.000014 * T * T) * math.sin(MRad) +
