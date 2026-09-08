@@ -81,6 +81,11 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Сравнить точки',
           ),
           IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () => Navigator.pushNamed(context, '/settings'),
+            tooltip: 'Настройки',
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadLocation,
             tooltip: 'Обновить',
