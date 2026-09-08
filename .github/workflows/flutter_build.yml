@@ -21,7 +21,7 @@ on:
           - test_only
 
 env:
-  FLUTTER_VERSION: '3.19.0'
+  FLUTTER_VERSION: '3.47.2'
   APP_DIR: 'solar_clock_app'
 
 jobs:

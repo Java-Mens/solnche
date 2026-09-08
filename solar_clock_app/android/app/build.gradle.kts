@@ -38,5 +38,5 @@ flutter {
 }
 
 dependencies {
-    implementation("es.antonborri:home_widget:0.4.1")
+    implementation("es.antonborri:home_widget:0.6.0")
 }

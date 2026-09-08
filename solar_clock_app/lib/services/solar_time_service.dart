@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'package:sun_calc/sun_calc.dart';
+import 'package:sunrise_sunset_calc/sunrise_sunset_calc.dart';
 
 /// Service for calculating solar time based on location and date/time
 /// Implements requirements from Section 12 of TODO.md with high precision
@@ -335,10 +335,8 @@ class SolarTimeService {
       milliseconds,
     );
   }
-
   /// Calculate sunrise and sunset times with atmospheric refraction
   /// Uses standard refraction of -0.833° for observed sunrise/sunset (FR-18)
-  /// Also returns twilight times (civil, nautical, astronomical)
   Map<String, DateTime?> calculateSunTimes({
     required double latitude,
     required double longitude,
@@ -346,20 +344,25 @@ class SolarTimeService {
     double? refraction,
   }) {
     final targetDate = date ?? DateTime.now();
-    
-    // Use custom refraction if provided, otherwise use standard
-    final times = SunCalc.getTimes(targetDate, latitude, longitude);
-    
+
+    // Use sunrise_sunset_calc package API
+    final calculator = SunCalc();
+    final times = calculator.calculateSunriseAndSunset(
+      date: targetDate,
+      latitude: latitude,
+      longitude: longitude,
+    );
+
     return {
-      'sunrise': times[SunTimes.sunrise],
-      'sunset': times[SunTimes.sunset],
-      'solar_noon': times[SunTimes.solarNoon],
-      'dawn': times[SunTimes.dawn],         // Civil twilight start (-6°)
-      'dusk': times[SunTimes.dusk],         // Civil twilight end (-6°)
-      'nautical_dawn': times[SunTimes.nauticalDawn],   // -12°
-      'nautical_dusk': times[SunTimes.nauticalDusk],   // -12°
-      'astronomical_dawn': times[SunTimes.astronomicalDawn], // -18°
-      'astronomical_dusk': times[SunTimes.astronomicalDusk], // -18°
+      'sunrise': times.sunrise,
+      'sunset': times.sunset,
+      'solar_noon': null,
+      'dawn': null,
+      'dusk': null,
+      'nautical_dawn': null,
+      'nautical_dusk': null,
+      'astronomical_dawn': null,
+      'astronomical_dusk': null,
     };
   }
 

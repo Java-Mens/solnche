@@ -1,32 +1,121 @@
 ```
-# Flutter/Dart specific
+# Dependency directories
 .dart_tool/
 .build/
-packages/
-*.iws
-*.swp
-*~
-.DS_Store
-*.log
-flutter/build/
-flutter/.pub-deps
-**/ios/.generated/
-**/android/.generated/
+dependencies/
 
-# Dependencies
-pubspec.lock
+# Build outputs
+bin/
+build/
+*.apk
+*.aab
+*.aar
 
 # Environment variables
 .env
 .env.local
-*.env.*
+.env.*
+!.env.example
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# OS generated files
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
+
+# Coverage
+coverage/
+lcov.info
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Android specific
+android/.gradle/
+android/build/
+android/app/build/
+*.iml
+!android/**/src/main/**/*
+
+# Flutter specific
+.flutter-plugins
+.flutter-plugin-dependencies
+.packages
+.pub-cache/
+.pub/
+flutter_export_environment.sh
+
+# IntelliJ related
+.idea/
+
+# VS Code related
+.vscode/
+
+# Gradle
+.gradle/
+*.gradle
+
+# Keystore properties
+**/key.properties
+
+# Generated plugin build files
+**/android/local.properties
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcodeproj/
+DerivedData/
+
+# Web
+build/web/
+
+# Windows
+*.bat
+*.exe
+
+# Linux
+*.so
+*.o
+*.a
+
+# Python (if any Python files exist in the project)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.gitattributes
+
+# Node.js (if any Node files exist in the project)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+.next/
+.nuxt/
+.vuepress/dist
+.static
+.nuxt
+.output
+.commit
+.husky/
 ```
