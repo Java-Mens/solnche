@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'package:sunrise_sunset_calc/sunrise_sunset_calc.dart';
 
 /// Service for calculating solar time based on location and date/time
 /// Implements requirements from Section 12 of TODO.md with high precision
@@ -344,19 +343,107 @@ class SolarTimeService {
     double? refraction,
   }) {
     final targetDate = date ?? DateTime.now();
-
-    // Use sunrise_sunset_calc package API
-    final calculator = SunCalc();
-    final times = calculator.calculateSunriseAndSunset(
-      date: targetDate,
-      latitude: latitude,
-      longitude: longitude,
-    );
+    
+    // Use built-in calculation based on solar position
+    // Algorithm from NOAA Solar Calculator
+    final jd = _toJulianDate(targetDate);
+    final T = _toJulianCentury(jd);
+    
+    // Calculate solar noon (transit time)
+    final L0 = _normalizeAngle(280.4664567 + 36000.7698278 * T);
+    final M = _normalizeAngle(357.5291092 + 35999.0502909 * T);
+    final C = 1.914602 * math.sin(_toRadians(M)) + 
+              0.019993 * math.sin(_toRadians(2 * M));
+    final sunLong = _normalizeAngle(L0 + _toDegrees(C));
+    final omega = 125.04452 - 1934.136261 * T;
+    final deltaPsi = -17.20 * math.sin(_toRadians(omega));
+    final sunApparentLong = _normalizeAngle(sunLong + _toDegrees(deltaPsi));
+    
+    // Mean obliquity of ecliptic
+    double epsilon = 23.439291 - 0.013004 * T;
+    final epsilonRad = _toRadians(epsilon);
+    final sunLongRad = _toRadians(sunApparentLong);
+    
+    // Right ascension
+    final alpha = _toDegrees(math.atan2(
+      math.cos(epsilonRad) * math.sin(sunLongRad),
+      math.cos(sunLongRad)
+    ));
+    
+    // Hour angle at sunrise/sunset (standard refraction -0.833°)
+    final latRad = _toRadians(latitude);
+    final declinationRad = _toDegrees(math.asin(
+      math.sin(epsilonRad) * math.sin(sunLongRad)
+    ));
+    final decRad = _toRadians(declinationRad);
+    
+    // Standard altitude for sunrise/sunset: -0.833 degrees
+    final h0 = refraction ?? -0.833;
+    final h0Rad = _toRadians(h0);
+    
+    // cos(H) = (sin(h0) - sin(lat)*sin(dec)) / (cos(lat)*cos(dec))
+    final cosH = (math.sin(h0Rad) - math.sin(latRad) * math.sin(decRad)) / 
+                 (math.cos(latRad) * math.cos(decRad));
+    
+    DateTime? sunrise;
+    DateTime? sunset;
+    DateTime? solarNoon;
+    
+    // Check if sun rises/sets on this day
+    if (cosH >= -1 && cosH <= 1) {
+      final H = _toDegrees(math.acos(cosH)); // Hour angle in degrees
+      
+      // Solar noon in hours (from midnight UTC)
+      final gmst = calculateGMST(targetDate);
+      final transitHour = ((alpha / 15.0 - gmst) * 24.0 / 360.0).abs();
+      
+      // Sunrise and sunset times
+      final sunriseHour = transitHour - H / 15.0;
+      final sunsetHour = transitHour + H / 15.0;
+      
+      // Normalize to [0, 24)
+      var sunriseNorm = sunriseHour % 24.0;
+      if (sunriseNorm < 0) sunriseNorm += 24.0;
+      var sunsetNorm = sunsetHour % 24.0;
+      if (sunsetNorm < 0) sunsetNorm += 24.0;
+      
+      final sunriseFrac = sunriseNorm / 24.0;
+      final sunsetFrac = sunsetNorm / 24.0;
+      
+      sunrise = DateTime.utc(
+        targetDate.year,
+        targetDate.month,
+        targetDate.day,
+        (sunriseFrac * 24).floor(),
+        ((sunriseFrac * 24 * 60) % 60).floor(),
+        ((sunriseFrac * 24 * 3600) % 60).floor(),
+      );
+      
+      sunset = DateTime.utc(
+        targetDate.year,
+        targetDate.month,
+        targetDate.day,
+        (sunsetFrac * 24).floor(),
+        ((sunsetFrac * 24 * 60) % 60).floor(),
+        ((sunsetFrac * 24 * 3600) % 60).floor(),
+      );
+      
+      // Solar noon
+      final noonFrac = (transitHour / 24.0) % 1.0;
+      solarNoon = DateTime.utc(
+        targetDate.year,
+        targetDate.month,
+        targetDate.day,
+        (noonFrac * 24).floor(),
+        ((noonFrac * 24 * 60) % 60).floor(),
+        ((noonFrac * 24 * 3600) % 60).floor(),
+      );
+    }
 
     return {
-      'sunrise': times.sunrise,
-      'sunset': times.sunset,
-      'solar_noon': null,
+      'sunrise': sunrise,
+      'sunset': sunset,
+      'solar_noon': solarNoon,
       'dawn': null,
       'dusk': null,
       'nautical_dawn': null,

@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
@@ -5,6 +7,17 @@ import 'package:timezone/data/latest.dart' as tz;
 /// Service for managing local notifications
 /// Implements FR-20, FR-21, FR-22, FR-23
 class NotificationService {
+  static final NotificationService _instance = NotificationService._internal();
+  
+  factory NotificationService() {
+    return _instance;
+  }
+  
+  NotificationService._internal();
+  
+  /// Get singleton instance
+  static NotificationService get instance => _instance;
+  
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
   
@@ -63,7 +76,6 @@ class NotificationService {
           'Солнечное время',
           description: 'Постоянное уведомление с текущим солнечным временем',
           importance: Importance.low,
-          priority: Priority.low,
           showBadge: false,
           enableVibration: false,
           playSound: false,
@@ -77,7 +89,6 @@ class NotificationService {
           'Солнечный зенит',
           description: 'Ежедневное уведомление о солнечном полдне',
           importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
           showBadge: true,
           enableVibration: true,
         ),
@@ -90,7 +101,6 @@ class NotificationService {
           'Восход и закат',
           description: 'Уведомления о восходе и закате солнца',
           importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
           showBadge: true,
           enableVibration: false,
         ),
@@ -130,7 +140,6 @@ class NotificationService {
         alert: true,
         badge: true,
         sound: true,
-        criticalAlert: false,
       );
       return granted ?? false;
     }
@@ -167,14 +176,12 @@ class NotificationService {
       'Солнечное время',
       channelDescription: 'Постоянное уведомление с текущим солнечным временем',
       importance: Importance.low,
-      priority: Priority.low,
       icon: '@mipmap/ic_launcher',
       ongoing: true,
       autoCancel: false,
       showWhen: false,
       category: AndroidNotificationCategory.service,
       visibility: NotificationVisibility.public,
-      color: const Color(0xFFFF9800),
       styleInformation: const BigTextStyleInformation(
         '',
         contentTitle: 'Солнечное время',
@@ -242,12 +249,10 @@ class NotificationService {
       'Солнечный зенит',
       channelDescription: 'Ежедневное уведомление о солнечном полдне',
       importance: Importance.high,
-      priority: Priority.high,
       icon: '@mipmap/ic_launcher',
       enableVibration: enableVibration,
       playSound: enableSound,
       visibility: NotificationVisibility.public,
-      color: const Color(0xFFFFC107),
     );
     
     final iosDetails = DarwinNotificationDetails(
@@ -300,11 +305,9 @@ class NotificationService {
       'Восход и закат',
       channelDescription: 'Уведомления о восходе и закате солнца',
       importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
       icon: '@mipmap/ic_launcher',
       enableVibration: enableVibration,
       playSound: enableSound,
-      color: const Color(0xFFFF5722),
     );
     
     final iosDetails = DarwinNotificationDetails(
@@ -348,11 +351,9 @@ class NotificationService {
       'Восход и закат',
       channelDescription: 'Уведомления о восходе и закате солнца',
       importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
       icon: '@mipmap/ic_launcher',
       enableVibration: enableVibration,
       playSound: enableSound,
-      color: const Color(0xFF673AB7),
     );
     
     final iosDetails = DarwinNotificationDetails(

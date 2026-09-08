@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:timezone/timezone.dart' as tz;
 import '../services/notification_service.dart';
 
 /// Экран настроек приложения (FR-19, FR-20, Раздел 13 ТЗ)

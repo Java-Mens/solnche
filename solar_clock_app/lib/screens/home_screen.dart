@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/location_point.dart';
 import '../services/location_service.dart';
-import '../services/solar_time_service.dart';
 import '../providers/solar_time_provider.dart';
 import '../widgets/solar_clock_widget.dart';
 import '../widgets/solar_comparison_widget.dart';

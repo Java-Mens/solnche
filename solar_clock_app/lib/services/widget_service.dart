@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:home_widget/home_widget.dart';
 
 /// Service for managing Android home screen widget
