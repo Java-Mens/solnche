@@ -1,0 +1,314 @@
+# СОЛНЦЕМЕР (Solntsemer) — ручная сборка и публикация pre-release.
+# Покрывает ТЗ §25 п.4 (github action для сборки APK и GNU/Linux бинарников в releases).
+# Запуск: Actions → «Сборка и pre-release» → Run workflow.
+name: Сборка и pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия релиза (пусто — взять из pubspec.yaml: 0.1.0+1 → v0.1.0)"
+        required: false
+        type: string
+        default: ""
+      publish:
+        description: "Опубликовать в GitHub Releases (иначе — только артефакты ранка)"
+        required: false
+        type: boolean
+        default: true
+      prerelease:
+        description: "Пометить релиз как pre-release (отметка о неполноте)"
+        required: false
+        type: boolean
+        default: true
+
+# Теги и релизы публикуются токеном этого же ранка.
+permissions:
+  contents: write
+
+# Не даём двум релизам одновременно толкаться в одном теге.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Верка из QWEN.md / «Стек»: stable 3.47.3 (Dart 3.13.3).
+  FLUTTER_VERSION: "3.47.3"
+  APP_NAME: solntsemer
+  APP_PACKAGE: dev.atom42.solntsemer
+  FLUTTER_SUPPRESS_ANALYTICS: "true"
+
+jobs:
+  # Версия и тег рассчитываются один раз и достаются остальным джобам.
+  meta:
+    name: Метаданные версии
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      build_number: ${{ steps.version.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Определить версию
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          raw="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+          if [ -z "$raw" ]; then
+            echo "::error::версия не найдена в pubspec.yaml"
+            exit 1
+          fi
+          base="${raw%%+*}"
+          build="${raw#"$base"}"
+          build="${build#+}"
+          if [ -n "$INPUT_VERSION" ]; then
+            base="$INPUT_VERSION"
+          fi
+          if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::версия '$base' не в формате MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "version=$base" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build" >> "$GITHUB_OUTPUT"
+          echo "tag=v$base" >> "$GITHUB_OUTPUT"
+          echo "Версия: $base (build $build), тег: v$base"
+
+  # Проверки из QWEN.md «Сборка и проверка»: pub get, analyze без warning/error, все тесты.
+  verify:
+    name: Проверить код (analyze + test)
+    runs-on: ubuntu-24.04
+    needs: meta
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Состав SDK (справочно)
+        run: flutter --version && (flutter doctor -v || true)
+
+      - name: Только открытые зависимости (ТЗ §24, запрет Google Play Services)
+        run: |
+          if grep -rniE 'play-services|com\.google\.android\.gms|firebase|google-services' \
+               android/app android/build.gradle.kts android/settings.gradle.kts pubspec.yaml; then
+            echo "::error::найдена закрытая/сервисная зависимость Google — она запрещена"
+            exit 1
+          fi
+          echo "Запрещённых зависимостей нет."
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Проверка блокировки зависимостей
+        run: |
+          if [ ! -f pubspec.lock ]; then
+            echo "::warning::pubspec.lock не в репозитории (игнорируется '*.lock' в .gitignore) — версии зависимостей в CI не зафиксированы"
+          fi
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+  linux:
+    name: Сборка GNU/Linux (x86-64)
+    runs-on: ubuntu-24.04
+    needs: [meta, verify]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Нативные зависимости (GTK3, clang, cmake, ninja)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: flutter build linux --release
+        run: flutter build linux --release
+
+      - name: Упаковать бандл в tar.gz
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eu
+          src="build/linux/x64/release/bundle"
+          [ -d "$src" ] || { echo "::error::бандл не найден: $src"; exit 1; }
+          mkdir -p dist
+          dst="dist/${APP_NAME}-${VERSION}-linux-x64"
+          mv "$src" "$dst"
+          tar -C dist -czf "dist/${APP_NAME}-${VERSION}-linux-x64.tar.gz" "$(basename "$dst")"
+          rm -rf "$dst"
+          ls -l dist
+          sha256sum dist/*.tar.gz | tee dist/SHA256SUMS-linux.txt
+
+      - name: Артефакты ранка
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-${{ needs.meta.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  android:
+    name: Сборка Android (APK + AAB)
+    runs-on: ubuntu-24.04
+    needs: [meta, verify]
+    steps:
+      - uses: actions/checkout@v4
+
+      # gradlew и gradle-wrapper.jar не лежат в git (штатный .gitignore Flutter):
+      # flutter сам подкладывает wrapper из своего кэша при сборке.
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Компоненты Android SDK из Flutter SDK
+        shell: bash
+        run: |
+          set -eu
+          sdk_root="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          ext="$sdk_root/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt"
+          compile_sdk="$(sed -n 's/.*val compileSdkVersion: Int = \([0-9]\{1,\}\).*/\1/p' "$ext")"
+          compile_sdk="${compile_sdk:-36}"
+          echo "compileSdk=$compile_sdk"
+          echo "COMPILE_SDK=$compile_sdk" >> "$GITHUB_ENV"
+
+      - name: Установить platform Android SDK
+        shell: bash
+        run: |
+          set -eu
+          android_home="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          sdkmanager=""
+          for candidate in "$android_home/cmdline-tools/latest/bin/sdkmanager" \
+                           "$android_home/cmdline-tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then sdkmanager="$candidate"; break; fi
+          done
+          if [ -z "$sdkmanager" ]; then
+            echo "::error::sdkmanager не найден в $android_home"
+            exit 1
+          fi
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-${COMPILE_SDK}"
+
+      - name: flutter build apk --release
+        run: flutter build apk --release
+
+      - name: Собрать артефакты
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          apk="build/app/outputs/flutter-apk/app-release.apk"
+          [ -f "$apk" ] || apk="$(find build -type f -name '*-release.apk' -print -quit)"
+          [ -n "$apk" ] || { echo "::error::APK не найден в build/"; exit 1; }
+          cp "$apk" "dist/${APP_NAME}-${VERSION}-android.apk"
+          ls -l dist
+          sha256sum dist/* | tee dist/SHA256SUMS-android.txt
+
+      - name: Артефакты ранка
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ needs.meta.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Публикация pre-release
+    runs-on: ubuntu-24.04
+    needs: [meta, linux, android]
+    if: github.event.inputs.publish == 'true'
+    steps:
+      - name: Скачать артефакты
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-${{ needs.meta.outputs.version }}"
+          path: incoming
+          merge-multiple: true
+
+      - name: Текст релиза
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p notes
+          cat > notes/body.md <<EOF
+          СОЛНЦЕМЕР \`dev.atom42.solntsemer\` — сборка ${VERSION} (\`${GITHUB_SHA::7}\`).
+
+          ## Что в релизе
+          | Файл | Платформа | Запуск / установка |
+          | --- | --- | --- |
+          | \`${APP_NAME}-${VERSION}-linux-x64.tar.gz\` | GNU/Linux x86-64 | распаковать и выполнить \`solntsemer\` |
+          | \`${APP_NAME}-${VERSION}-android.apk\` | Android ≥ 8.0 (API 26) | установить APK (arm64-v8a, armeabi-v7a, x86_64) |
+          | \`SHA256SUMS-*.txt\` | — | контрольные суммы |
+
+          ## Требования
+          - GNU/Linux x86-64: GTK 3 (\`libgtk-3-0\`) и glibc не ниже той, что в ubuntu-24.04 — сборка
+          делалась на ubuntu-24.04. Запуск: \`./solntsemer\`. Интеграции с tray/виджета нет.
+          - Android: API 26 и выше (min SDK 26 по ТЗ FR-05), Google Play Services не требуются.
+
+          ## Как собиралось
+          - Flutter ${FLUTTER_VERSION} (stable), Dart 3.13.3.
+          - GNU/Linux: \`flutter build linux --release\`.
+          - Android: \`flutter build apk --release\`.
+          - Проверки перед сборкой: \`flutter analyze\` (без warning/error) и \`flutter test\`.
+
+          ## Ограничения этой сборки
+          - APK подписан **отладочным** ключом Flutter (\`signingConfigs.getByName("debug")\` в
+          \`android/app/build.gradle.kts\`). Для прямой установки на устройство этого достаточно;
+          релизная подпись не настроена.
+          - Не входит в эту сборку (следующие итерации ТЗ): OSM-карта и поиск (FR-08…FR-10, FR-12),
+          фоновый сервис, уведомление и виджет рабочего стола (FR-20…FR-27).
+          - Геолокация — собственный плагин на \`android.location.LocationManager\`, без Google Play
+          Services; аналитики и трекеров нет (см. \`PRIVACY.md\`).
+
+          Лицензия кода: GPLv3 или новее (\`LICENSE\`).
+          EOF
+          cat notes/body.md
+
+      - name: Создать или обновить релиз
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ github.event.inputs.prerelease }}
+        run: |
+          set -eu
+          flags=(--title "СОЛНЦЕМЕР ${TAG}")
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Релиз $TAG уже существует — обновляю ассеты и описание."
+            gh release edit "$TAG" "${flags[@]}" --notes-file notes/body.md
+            gh release upload "$TAG" incoming/* --clobber
+          else
+            gh release create "$TAG" incoming/* \
+              "${flags[@]}" \
+              --notes-file notes/body.md \
+              --target "$GITHUB_SHA"
+          fi
+          gh release view "$TAG"
