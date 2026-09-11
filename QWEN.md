@@ -45,7 +45,9 @@
 - **FR-08..FR-10, FR-12** — OSM-карта и поиск (Nominatim).
 - **FR-20..FR-23** — foreground service + постоянное уведомление.
 - **FR-24..FR-27** — виджет рабочего стола Android.
-- GitHub Actions CI, README с инструкциями сборки, privacy policy, список лицензий, описание алгоритмов.
+- README с инструкциями сборки.
+
+Уже сделано: GitHub Actions (`.github/workflows/release.yml`), `PRIVACY.md`, `LICENSES.md`, `ALGORITHMS.md`.
 
 ## Структура (ТЗ §15)
 
@@ -75,8 +77,12 @@ lib/
 - `flutter test` — все юнит-тесты (астрономия, форматирование, парсинг координат).
 - `flutter analyze` — без warning/error.
 - `flutter build linux` — собирает исполняемый файл для GNU/Linux (primary target проверки в этой сессии).
-- Android build (APK/AAB) **не выполняется** в этой итерации по решению пользователя;
-  Android SDK установлен в `~/Android/Sdk` (если добавится), но `flutter build apk` не запускается.
+- Локальные Android-сборки (APK) **не выполняются** в этой итерации по решению пользователя;
+  Android SDK установлен в `~/Android/Sdk` (если добавится), но `flutter build apk` локально не запускается.
+- **CI**: `.github/workflows/release.yml` (ручной запуск `workflow_dispatch`) собирает GNU/Linux
+  (`tar.gz`) и Android (`apk`, без AAB — Google Play не планируется) и публикует pre-release в
+  GitHub Releases; перед сборкой — `flutter analyze` + `flutter test` + проверка на закрытые
+  зависимости. Flutter в CI зафиксирован: 3.47.3 stable.
 
 ## Ключевые формулы
 
