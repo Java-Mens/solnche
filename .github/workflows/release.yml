@@ -210,7 +210,7 @@ jobs:
             echo "::error::sdkmanager не найден в $android_home"
             exit 1
           fi
-          yes | "$sdkmanager" --licenses > /dev/null
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "platforms;android-${COMPILE_SDK}"
 
       - name: flutter build apk --release
