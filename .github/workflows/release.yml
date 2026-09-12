@@ -83,12 +83,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Flutter ${{ env.FLUTTER_VERSION }}
-        uses: subosito/flutter-action@v2
+      - name: Кэш Flutter SDK
+        uses: actions/cache@v4
+        id: cache-flutter-verify
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+          path: ${{ runner.temp }}/flutter-sdk
+          key: flutter-${{ env.FLUTTER_VERSION }}-linux
+
+      - name: Установить Flutter ${{ env.FLUTTER_VERSION }}
+        if: steps.cache-flutter-verify.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "${{ env.FLUTTER_VERSION }}" https://github.com/flutter/flutter.git "${{ runner.temp }}/flutter-sdk"
+
+      - name: Flutter в PATH
+        run: |
+          echo "${{ runner.temp }}/flutter-sdk/bin" >> "$GITHUB_PATH"
+          echo "${{ runner.temp }}/flutter-sdk/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
 
       - name: Состав SDK (справочно)
         run: flutter --version && (flutter doctor -v || true)
@@ -130,12 +139,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 
-      - name: Flutter ${{ env.FLUTTER_VERSION }}
-        uses: subosito/flutter-action@v2
+      - name: Кэш Flutter SDK
+        uses: actions/cache@v4
+        id: cache-flutter-linux
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+          path: ${{ runner.temp }}/flutter-sdk
+          key: flutter-${{ env.FLUTTER_VERSION }}-linux
+
+      - name: Установить Flutter ${{ env.FLUTTER_VERSION }}
+        if: steps.cache-flutter-linux.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "${{ env.FLUTTER_VERSION }}" https://github.com/flutter/flutter.git "${{ runner.temp }}/flutter-sdk"
+
+      - name: Flutter в PATH
+        run: |
+          echo "${{ runner.temp }}/flutter-sdk/bin" >> "$GITHUB_PATH"
+          echo "${{ runner.temp }}/flutter-sdk/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
 
       - name: flutter build linux --release
         run: flutter build linux --release
@@ -163,7 +181,7 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: Сборка Android (APK + AAB)
+    name: Сборка Android (APK)
     runs-on: ubuntu-24.04
     needs: [meta, verify]
     steps:
@@ -172,18 +190,27 @@ jobs:
       # gradlew и gradle-wrapper.jar не лежат в git (штатный .gitignore Flutter):
       # flutter сам подкладывает wrapper из своего кэша при сборке.
       - name: JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-      - name: Flutter ${{ env.FLUTTER_VERSION }}
-        uses: subosito/flutter-action@v2
+      - name: Кэш Flutter SDK
+        uses: actions/cache@v4
+        id: cache-flutter-android
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+          path: ${{ runner.temp }}/flutter-sdk
+          key: flutter-${{ env.FLUTTER_VERSION }}-linux
+
+      - name: Установить Flutter ${{ env.FLUTTER_VERSION }}
+        if: steps.cache-flutter-android.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "${{ env.FLUTTER_VERSION }}" https://github.com/flutter/flutter.git "${{ runner.temp }}/flutter-sdk"
+
+      - name: Flutter в PATH
+        run: |
+          echo "${{ runner.temp }}/flutter-sdk/bin" >> "$GITHUB_PATH"
+          echo "${{ runner.temp }}/flutter-sdk/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
 
       - name: Компоненты Android SDK из Flutter SDK
         shell: bash
@@ -242,6 +269,8 @@ jobs:
     needs: [meta, linux, android]
     if: github.event.inputs.publish == 'true'
     steps:
+      - uses: actions/checkout@v4
+
       - name: Скачать артефакты
         uses: actions/download-artifact@v4
         with:
