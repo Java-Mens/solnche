@@ -100,16 +100,8 @@ class SunriseModeNotifier extends Notifier<SunriseMode> {
   }
 }
 
-// ── Солнечный снимок (точка A) ───────────────────────────────────────────────
-
-final solarSnapshotProvider = StreamProvider<SolarSnapshot>((ref) {
-  final point = ref.watch(pointAProvider);
-  final dut1 = ref.watch(dut1Provider);
-  final mode = ref.watch(sunriseModeProvider);
-  final settings = ref.watch(settingsProvider);
-
-  if (point == null) {
-    return Stream.value(SolarSnapshot(
+/// Пустой снимок для отсутствующей точки.
+SolarSnapshot _emptySnapshot() => SolarSnapshot(
       lat: Duration.zero,
       utcOffset: Duration.zero,
       equationOfTime: Duration.zero,
@@ -120,13 +112,21 @@ final solarSnapshotProvider = StreamProvider<SolarSnapshot>((ref) {
       solarNoonUtc: null,
       polarDay: false,
       polarNight: false,
-    ));
-  }
+    );
+
+// ── Солнечный снимок (точка A) ───────────────────────────────────────────────
+
+final solarSnapshotProvider = StreamProvider<SolarSnapshot>((ref) {
+  final dut1 = ref.watch(dut1Provider);
+  final mode = ref.watch(sunriseModeProvider);
+  final settings = ref.watch(settingsProvider);
 
   final calc = SolarCalculator(dut1Source: dut1, sunriseMode: mode);
   final interval = Duration(seconds: settings.timeUpdateIntervalSeconds);
 
   return Stream.periodic(interval, (_) {
+    final point = ref.read(pointAProvider); // read, не watch
+    if (point == null) return _emptySnapshot();
     return calc.compute(point, DateTime.now().toUtc());
   });
 });
@@ -134,19 +134,16 @@ final solarSnapshotProvider = StreamProvider<SolarSnapshot>((ref) {
 // ── Солнечный снимок (точка B) ───────────────────────────────────────────────
 
 final solarSnapshotBProvider = StreamProvider<SolarSnapshot>((ref) {
-  final point = ref.watch(pointBProvider);
   final dut1 = ref.watch(dut1Provider);
   final mode = ref.watch(sunriseModeProvider);
   final settings = ref.watch(settingsProvider);
-
-  if (point == null) {
-    return const Stream.empty();
-  }
 
   final calc = SolarCalculator(dut1Source: dut1, sunriseMode: mode);
   final interval = Duration(seconds: settings.timeUpdateIntervalSeconds);
 
   return Stream.periodic(interval, (_) {
+    final point = ref.read(pointBProvider); // read, не watch
+    if (point == null) return _emptySnapshot();
     return calc.compute(point, DateTime.now().toUtc());
   });
 });
