@@ -8,14 +8,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/astronomy/solar_calculator.dart';
 import '../core/geo/geo_point.dart';
-import '../data/dut1/dut1_source.dart';
+import '../core/time/second_boundary.dart';
+import '../data/dut1/dut1_provider.dart';
 import '../data/location/location_repository.dart';
+import '../data/settings/settings_provider.dart';
 import '../data/settings/settings_repository.dart';
 
-/// Провайдер репозитория настроек.
-final settingsProvider = Provider<SettingsRepository>((ref) {
-  throw UnimplementedError('Must be overridden in ProviderScope');
-});
+// Репозиторий настроек и источник DUT1 вынесены в data-слой
+// (data/settings/settings_provider.dart, data/dut1/dut1_provider.dart) —
+// переэкспортируем, чтобы существующие импорты ui/providers.dart работали.
+export '../data/dut1/dut1_provider.dart' show dut1Provider;
+export '../data/settings/settings_provider.dart' show settingsProvider;
 
 /// Провайдер источника геолокации.
 final locationProvider = Provider<LocationRepository>((ref) {
@@ -25,47 +28,152 @@ final locationProvider = Provider<LocationRepository>((ref) {
   return const UnsupportedLocationRepository();
 });
 
-/// Провайдер источника DUT1.
-final dut1Provider = Provider<Dut1Source>((ref) {
-  return const NoDut1Source();
-});
-
 // ── Точка A ──────────────────────────────────────────────────────────────────
 
 final pointAProvider = NotifierProvider<PointANotifier, GeoPoint?>(PointANotifier.new);
 
+/// Точка A с автоматическим определением местоположения.
+///
+/// Поведение:
+/// - в режиме «авто» (по умолчанию) точка обновляется по данным GPS/сети
+///   с фильтрацией (возраст, точность, порог смещения);
+/// - ручной ввод координат переключает точку в ручной режим: слежение
+///   останавливается, и сохранённые координаты не перезаписываются
+///   ни потоком GPS, ни устаревшим кэшем getLastKnown при перезапуске;
+/// - [startAutoLocation] возвращает точку в автоматический режим.
 class PointANotifier extends Notifier<GeoPoint?> {
   StreamSubscription? _sub;
+
+  /// Фильтр «живых» фиксов из потока GPS/сети.
+  static const _streamFilter = FixFilter(
+    maxAge: Duration(seconds: 90),
+    maxAccuracyMeters: 100,
+    minMoveMeters: 25,
+  );
+
+  /// Фильтр для getLastKnown при старте: допускаем более старый кэш,
+  /// чтобы сразу показать хоть что-то (свежий фикс уточнит позицию).
+  static const _lastKnownFilter = FixFilter(
+    maxAge: Duration(minutes: 15),
+    maxAccuracyMeters: 2500,
+    minMoveMeters: 25,
+  );
 
   @override
   GeoPoint? build() {
     final settings = ref.read(settingsProvider);
     final location = ref.read(locationProvider);
-    ref.onDispose(() => _sub?.cancel());
-    _init(settings, location);
+    ref.onDispose(() {
+      _sub?.cancel();
+      _sub = null;
+    });
+    if (!settings.pointAManual) {
+      unawaited(_initAutoLocation(settings, location));
+    }
     return settings.getPointA();
   }
 
-  Future<void> _init(SettingsRepository settings, LocationRepository location) async {
-    final status = await location.checkStatus();
-    if (status == LocationStatus.available) {
-      final fix = await location.getLastKnown();
-      if (fix != null) {
-        state = fix.point;
-        await settings.setPointA(fix.point);
+  Future<void> _initAutoLocation(
+    SettingsRepository settings,
+    LocationRepository location, {
+    bool forcePermissionRequest = false,
+  }) async {
+    try {
+      var status = await location.checkStatus();
+      if (status == LocationStatus.permissionDenied || forcePermissionRequest) {
+        status = await location.requestPermission();
       }
-      _sub = location.watch(intervalSeconds: settings.locationIntervalSeconds).listen((fix) {
+      if (status != LocationStatus.available) return;
+
+      final last = await location.getLastKnown();
+      if (last != null && state == null) {
+        if (_lastKnownFilter.accept(last, null, DateTime.now().toUtc())) {
+          state = last.point;
+          ref.read(pointAFixProvider.notifier).state = last;
+          settings.setPointA(last.point);
+        }
+      }
+
+      await _sub?.cancel();
+      _sub = location
+          .watch(intervalSeconds: settings.locationIntervalSeconds)
+          .listen((fix) {
+        if (!_streamFilter.accept(fix, state, DateTime.now().toUtc())) {
+          return;
+        }
+        if (fix.point == state) return;
         state = fix.point;
+        ref.read(pointAFixProvider.notifier).state = fix;
         settings.setPointA(fix.point);
       });
+    } finally {
+      // Статус источника точки A изменился — пересчитать (ТЗ FR-07).
+      ref.invalidate(pointASourceProvider);
     }
   }
 
+  /// Ручной ввод координат: останавливаем автоопределение и фиксируем
+  /// ручной режим в настройках.
   Future<void> setPoint(GeoPoint? p) async {
     await _sub?.cancel();
+    _sub = null;
+    try {
+      await ref.read(locationProvider).stopWatching();
+    } catch (_) {
+      // платформа без геолокации
+    }
     state = p;
-    await ref.read(settingsProvider).setPointA(p);
+    final settings = ref.read(settingsProvider);
+    await settings.setPointAManual(p != null);
+    await settings.setPointA(p);
+    // Ручной режим: индикация фикса больше не актуальна.
+    ref.read(pointAFixProvider.notifier).state = null;
+    // Точка стала ручной — обновить статус (ТЗ FR-07).
+    ref.invalidate(pointASourceProvider);
   }
+
+  /// Возвращает точку A в автоматический режим (кнопка «Моё местоположение»).
+  Future<void> startAutoLocation() async {
+    final settings = ref.read(settingsProvider);
+    await settings.setPointAManual(false);
+    await _initAutoLocation(settings, ref.read(locationProvider),
+        forcePermissionRequest: true);
+  }
+}
+
+// ── Статус источника точки A (ТЗ FR-07) ─────────────────────────────────
+
+/// Откуда в текущий момент берётся точка A — для индикации в интерфейсе.
+enum PointASource {
+  /// Задана вручную, геолокация не используется.
+  manual,
+
+  /// Определяется автоматически, геолокация доступна.
+  tracking,
+
+  /// Геолокация недоступна — используется выбранная точка.
+  geoUnavailable,
+}
+
+final pointASourceProvider = FutureProvider<PointASource>((ref) async {
+  final settings = ref.watch(settingsProvider);
+  if (settings.pointAManual) return PointASource.manual;
+  final location = ref.watch(locationProvider);
+  final status = await location.checkStatus();
+  return status == LocationStatus.available
+      ? PointASource.tracking
+      : PointASource.geoUnavailable;
+});
+
+/// Последний принятый фикс геолокации точки A (ТЗ FR-06/FR-14):
+/// момент, точность и провайдер — для индикации «координаты обновляются
+/// в реалтайме» на главном экране.
+final pointAFixProvider =
+    NotifierProvider<PointAFixNotifier, LocationFix?>(PointAFixNotifier.new);
+
+class PointAFixNotifier extends Notifier<LocationFix?> {
+  @override
+  LocationFix? build() => null;
 }
 
 // ── Точка B ──────────────────────────────────────────────────────────────────
@@ -114,18 +222,37 @@ SolarSnapshot _emptySnapshot() => SolarSnapshot(
       polarNight: false,
     );
 
+/// Периодический поток с немедленным первым значением (без «пустого»
+/// интервала ожидания при пересоздании провайдера).
+///
+/// Тики выровнены по секундной границе системных часов (ТЗ FR-02):
+/// при интервале 1 с значения выдаются точно на целых секундах,
+/// при больших интервалах — на целых секундах, кратных интервалу.
+Stream<SolarSnapshot> _ticker(
+    Duration interval, SolarSnapshot Function() compute) async* {
+  yield compute();
+  var ticksLeft = interval.inSeconds;
+  while (true) {
+    await Future.delayed(
+        Duration(milliseconds: delayToNextSecondBoundary(DateTime.now())));
+    if (--ticksLeft > 0) continue;
+    ticksLeft = interval.inSeconds;
+    yield compute();
+  }
+}
+
 // ── Солнечный снимок (точка A) ───────────────────────────────────────────────
 
 final solarSnapshotProvider = StreamProvider<SolarSnapshot>((ref) {
   final dut1 = ref.watch(dut1Provider);
   final mode = ref.watch(sunriseModeProvider);
   final settings = ref.watch(settingsProvider);
+  final point = ref.watch(pointAProvider);
 
   final calc = SolarCalculator(dut1Source: dut1, sunriseMode: mode);
   final interval = Duration(seconds: settings.timeUpdateIntervalSeconds);
 
-  return Stream.periodic(interval, (_) {
-    final point = ref.read(pointAProvider); // read, не watch
+  return _ticker(interval, () {
     if (point == null) return _emptySnapshot();
     return calc.compute(point, DateTime.now().toUtc());
   });
@@ -137,12 +264,12 @@ final solarSnapshotBProvider = StreamProvider<SolarSnapshot>((ref) {
   final dut1 = ref.watch(dut1Provider);
   final mode = ref.watch(sunriseModeProvider);
   final settings = ref.watch(settingsProvider);
+  final point = ref.watch(pointBProvider);
 
   final calc = SolarCalculator(dut1Source: dut1, sunriseMode: mode);
   final interval = Duration(seconds: settings.timeUpdateIntervalSeconds);
 
-  return Stream.periodic(interval, (_) {
-    final point = ref.read(pointBProvider); // read, не watch
+  return _ticker(interval, () {
     if (point == null) return _emptySnapshot();
     return calc.compute(point, DateTime.now().toUtc());
   });

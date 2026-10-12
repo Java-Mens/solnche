@@ -62,3 +62,57 @@ String formatUtcTime(DateTime? utc, {bool withSeconds = false}) {
   }
   return buf.toString();
 }
+
+const _weekdayShort = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+
+/// Формат события в местном времени устройства: «вс 12.10, 07:21:39».
+///
+/// Восход/заход/полдень рассчитываются в UTC; для пользователя из
+/// Владивостока восход в 21:20 UTC — это 07:20 следующего дня по месту,
+/// поэтому дата в выводе обязательна.
+String formatLocalEventTime(DateTime? utc) {
+  if (utc == null) return '—';
+  final local = utc.toLocal();
+  final buf = StringBuffer()
+    ..write(_weekdayShort[local.weekday - 1])
+    ..write(' ')
+    ..write(_twoDigits.format(local.day))
+    ..write('.')
+    ..write(_twoDigits.format(local.month))
+    ..write(', ')
+    ..write(_twoDigits.format(local.hour))
+    ..write(':')
+    ..write(_twoDigits.format(local.minute))
+    ..write(':')
+    ..write(_twoDigits.format(local.second));
+  return buf.toString();
+}
+
+/// Дата события в местном времени для подзаголовка: «вс 12.10 · UTC 21:21».
+String formatLocalEventSub(DateTime? utc) {
+  if (utc == null) return '';
+  final local = utc.toLocal();
+  final utcText = formatUtcTime(utc);
+  return '${_weekdayShort[local.weekday - 1]} '
+      '${_twoDigits.format(local.day)}.${_twoDigits.format(local.month)}'
+      ' · UTC $utcText';
+}
+
+/// Метка часового пояса устройства: «UTC+10», «UTC−03:30».
+String formatLocalTzLabel() {
+  final offset = DateTime.now().timeZoneOffset;
+  final sign = offset.isNegative ? '−' : '+';
+  final h = offset.inHours.abs();
+  final m = offset.inMinutes.abs() % 60;
+  final mm = m == 0 ? '' : ':${_twoDigits.format(m)}';
+  return 'UTC$sign$h$mm';
+}
+
+/// ЧЧ:ММ:СС момента [utc] в местном времени устройства —
+/// для метки «координаты обновлены …».
+String formatLocalHms(DateTime utc) {
+  final l = utc.toLocal();
+  return '${_twoDigits.format(l.hour)}:'
+      '${_twoDigits.format(l.minute)}:'
+      '${_twoDigits.format(l.second)}';
+}

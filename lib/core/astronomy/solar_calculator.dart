@@ -15,6 +15,11 @@
 /// Поправка DUT1 применяется к аргументу [sidereal.apparent] (зависит от
 /// вращения Земли, 1:1). Для α_sun и нутации сдвиг jde на DUT1
 /// пренебрежимо мал (≤0.9 с → ошибка α ≤ 0.04″ → ошибка LAT ≤ 0.003 с).
+///
+/// Восход/заход/полдень возвращаются как БЛИЖАЙШИЕ события от текущего
+/// момента (а не события «текущих UTC-суток», как раньше): восход на
+/// Дальнем Востоке может происходить в 21:xx UTC предыдущих суток, и
+/// полуночная граница UTC-дня не должна влиять на выбор события.
 library;
 
 import 'dart:math' as math;
@@ -26,6 +31,7 @@ import 'package:astronomia/deltat.dart' as deltat;
 import 'package:astronomia/planetposition.dart' show Planet;
 
 import '../../data/dut1/dut1_source.dart';
+import '../../data/dut1/dut1_table.dart' show kLeapSeconds;
 import '../geo/geo_point.dart';
 
 /// Режим расчёта восхода/захода (FR-18).
@@ -55,13 +61,14 @@ class SolarSnapshot {
   /// `true`, если DUT1 получен из актуального источника.
   final bool dut1Precise;
 
-  /// Ближайший (к моменту расчёта) восход в UTC, либо null в полярных случаях.
+  /// Ближайший восход в UTC (не раньше момента расчёта), либо null в
+  /// полярных случаях.
   final DateTime? nextSunriseUtc;
 
   /// Ближайший заход в UTC, либо null.
   final DateTime? nextSunsetUtc;
 
-  /// Солнечный полдень текущего дня в UTC.
+  /// Ближайший солнечный полдень в UTC (не раньше момента расчёта).
   final DateTime? solarNoonUtc;
 
   /// Полярный день (Солнце не заходит).
@@ -88,7 +95,14 @@ class SolarCalculator {
   final Dut1Source dut1Source;
   final SunriseMode sunriseMode;
 
-  const SolarCalculator({
+  /// Кэш расчётов восход/заход/полдень по (точка, режим, JD-сутки).
+  /// Расчёт занимает ~300–800 вычислений положения Солнца, а перерисовка
+  /// происходит каждую секунду — кэширование обязательно.
+  final Map<String, _RiseSetNoon> _riseSetCache = {};
+
+  static const _maxCacheEntries = 32;
+
+  SolarCalculator({
     required this.dut1Source,
     this.sunriseMode = SunriseMode.observed,
   });
@@ -100,7 +114,7 @@ class SolarCalculator {
 
   SolarSnapshot compute(GeoPoint point, DateTime nowUtc) {
     final dut1 = dut1Source.getDut1(nowUtc);
-    final dut1Precise = dut1Source.isPrecise;
+    final dut1Precise = dut1Source.isPreciseFor(nowUtc);
 
     final jdUtc = dateTimeToJd(nowUtc);
     final jdUt1 = jdUtc + dut1 / 86400.0;
@@ -109,11 +123,8 @@ class SolarCalculator {
     final gastSeconds = sidereal.apparent(jdUt1);
     final gastHours = gastSeconds / 3600.0;
 
-    // Для положения Солнца нужен jde (TT). ΔT = TT − UT1; astronomia
-    // предоставляет полиномиальные модели. На точность LAT ошибка ΔT
-    // не влияет (влияет только на α_sun и нутацию, и там ошибки << 1 с).
     final yearDecimal = _yearFractional(nowUtc);
-    final deltaT = _getDeltaT(yearDecimal, jdUt1);
+    final deltaT = _getDeltaT(yearDecimal, jdUt1, dut1);
     final jde = jdUt1 + deltaT / 86400.0;
 
     final sun = solar.apparentEquatorial(jde);
@@ -132,41 +143,24 @@ class SolarCalculator {
     // для основной траектории всегда e().
     final eotHours = _equationOfTimeHours(jde);
 
-    // Восход/заход/полдень: обходим сутки UTC шагами, уточняя переходы.
+    // Восход/заход/полдень: всегда считаем текущие и следующие UTC-сутки
+    // (с кэшем), затем выбираем ближайшие события от текущего момента.
     final jdTodayUtc = (jdUtc + 0.5).floorToDouble() - 0.5;
-    final eventsToday = _riseSetNoon(jdTodayUtc, point);
-    final eventsTomorrow = eventsToday.rise != null &&
-            eventsToday.set != null &&
-            eventsToday.rise! < jdUtc &&
-            eventsToday.set! < jdUtc
-        ? _riseSetNoon(jdTodayUtc + 1.0, point)
-        : null;
-
-    DateTime? pickFuture(double? jdA, double? jdB) {
-      final a = jdA == null ? null : jdToDateTime(jdA);
-      final b = jdB == null ? null : jdToDateTime(jdB);
-      if (a != null && a.isAfter(nowUtc)) return a;
-      if (b != null && b.isAfter(nowUtc)) return b;
-      return b ?? a;
-    }
+    final eventsToday = _riseSetNoonCached(jdTodayUtc, point, deltaT);
+    final eventsTomorrow = _riseSetNoonCached(jdTodayUtc + 1.0, point, deltaT);
 
     final nextSunrise =
-        pickFuture(eventsToday.rise, eventsTomorrow?.rise);
-    final nextSunset =
-        pickFuture(eventsToday.set, eventsTomorrow?.set);
-    final solarNoon =
-        eventsToday.noon.isNaN ? null : jdToDateTime(eventsToday.noon);
+        _pickNext(eventsToday.rise, eventsTomorrow.rise, nowUtc);
+    final nextSunset = _pickNext(eventsToday.set, eventsTomorrow.set, nowUtc);
+    final solarNoon = eventsToday.noon.isNaN
+        ? _pickNext(null, eventsTomorrow.noon.isNaN ? null : eventsTomorrow.noon, nowUtc)
+        : _pickNext(eventsToday.noon, eventsTomorrow.noon, nowUtc);
 
-    // Полярные случаи: если ни восхода, ни захода в течение суток — смотрим
-    // высоту Солнца в кульминации.
-    final polarDay = eventsToday.rise == null &&
-        eventsToday.set == null &&
-        !eventsToday.noon.isNaN &&
-        _altitudeAt(jdTodayUtc + 0.5, point) > 0;
-    final polarNight = eventsToday.rise == null &&
-        eventsToday.set == null &&
-        !eventsToday.noon.isNaN &&
-        _altitudeAt(jdTodayUtc + 0.5, point) <= 0;
+    // Полярные случаи: ни восхода, ни захода в ближайшие ~48 часов.
+    // Ориентируемся на текущее положение Солнца над горизонтом.
+    final sunUpNow = _altitudeAtJd(jdUtc, point, deltaT) > 0;
+    final polarDay = nextSunrise == null && nextSunset == null && sunUpNow;
+    final polarNight = nextSunrise == null && nextSunset == null && !sunUpNow;
 
     return SolarSnapshot(
       lat: _hoursToDuration(latHours),
@@ -182,6 +176,16 @@ class SolarCalculator {
     );
   }
 
+  /// Выбирает ближайшее событие из «сегодня»/«завтра» (не раньше [nowUtc]).
+  /// Если оба события в прошлом или null — возвращает последнее известное.
+  DateTime? _pickNext(double? jdA, double? jdB, DateTime nowUtc) {
+    final a = jdA == null ? null : jdToDateTime(jdA);
+    if (a != null && a.isAfter(nowUtc)) return a;
+    final b = jdB == null ? null : jdToDateTime(jdB);
+    if (b != null && b.isAfter(nowUtc)) return b;
+    return b ?? a;
+  }
+
   double _equationOfTimeHours(double jde) {
     try {
       final earth = Planet(2);
@@ -194,17 +198,34 @@ class SolarCalculator {
     }
   }
 
+  _RiseSetNoon _riseSetNoonCached(
+      double jdDay, GeoPoint point, double deltaT) {
+    final key = '${point.lat.toStringAsFixed(6)},'
+        '${point.lon.toStringAsFixed(6)},'
+        '${_h0Rad.toStringAsFixed(6)},'
+        '${jdDay.toStringAsFixed(1)}';
+    final cached = _riseSetCache[key];
+    if (cached != null) return cached;
+    if (_riseSetCache.length >= _maxCacheEntries) {
+      _riseSetCache.clear();
+    }
+    return _riseSetCache[key] =
+        _computeRiseSetNoon(jdDay, point.latRad, point.lonRadWest, _h0Rad, deltaT);
+  }
+
   /// Высота Солнца над горизонтом (рад) в заданный JD (UT).
-  double _altitudeAt(double jd, GeoPoint point) {
-    final eq = solar.apparentEquatorial(jd);
+  double _altitudeAtJd(double jd, GeoPoint point, double deltaT) {
+    final eq = solar.apparentEquatorial(jd + deltaT / 86400.0);
     final st = sidereal.apparent(jd) / 86400.0 * 2.0 * math.pi;
     return _eqToAlt(eq.ra, eq.dec, point.latRad, point.lonRadWest, st);
   }
 
-  _RiseSetNoon _riseSetNoon(double jd, GeoPoint point) {
-    // Используем собственную реализацию с настраиваемым h0 вместо astronomia.sunrise,
-    // т.к. последняя имеет жёстко зашитое h0 = −50′ (наблюдаемый режим).
-    return _computeRiseSetNoon(jd, point.latRad, point.lonRadWest, _h0Rad);
+  /// ΔT = TT − UT1 (секунды) для момента [nowUtc] при заданном DUT1.
+  ///
+  /// Публичный статический метод — для тестов и внешнего использования.
+  static double deltaTFor(DateTime nowUtc, double dut1) {
+    return _getDeltaT(
+        _yearFractional(nowUtc), dateTimeToJd(nowUtc) + dut1 / 86400.0, dut1);
   }
 }
 
@@ -285,17 +306,43 @@ double _yearFractional(DateTime utc) {
   return utc.year + frac;
 }
 
-/// ΔT = TT − UT1 в секундах. Использует astronomia.deltat с переключением
-/// между табличной интерполяцией (1620–2010) и полиномом после 2000.
-double _getDeltaT(double year, double jde) {
-  if (year >= 2000 && year < 2100) {
-    return deltat.polyAfter2000(year);
+/// ΔT = TT − UT1 в секундах.
+///
+/// С 1972-01-01 вычисляется точно из определения шкал:
+///
+///     TT = TAI + 32.184 с,   TAI = UTC + (TAI − UTC),   UT1 = UTC + DUT1
+///     ΔT = 32.184 + (TAI − UTC) − DUT1
+///
+/// где (TAI − UTC) — целое число високосных секунд из [kLeapSeconds]
+/// (история IERS Bulletin C), а DUT1 — текущая поправка источника.
+/// До 1972 года — табличная интерполяция astronomia (Meeus, гл. 10).
+double _getDeltaT(double year, double jdUt1, double dut1) {
+  final taiMinusUtc = _taiMinusUtcFor(jdUt1);
+  if (taiMinusUtc != null) {
+    return 32.184 + taiMinusUtc - dut1;
   }
   if (year >= 1620 && year <= 2010) {
-    return deltat.interp10A(jde);
+    return deltat.interp10A(jdUt1);
   }
-  // За пределами поддерживаемого диапазона — полином как запасной вариант.
-  return deltat.polyAfter2000(year.clamp(2000, 2099));
+  return deltat.polyAfter2000(year.clamp(2005, 2099).toDouble());
+}
+
+/// TAI − UTC (секунды) для заданного JD(UT) по таблице високосных секунд.
+/// Возвращает null для дат раньше 1972-01-01.
+double? _taiMinusUtcFor(double jdUt) {
+  if (kLeapSeconds.isEmpty) return null;
+  final mjd = jdUt - 2400000.5;
+  if (mjd < kLeapSeconds.first.$1) return null;
+  var lo = 0, hi = kLeapSeconds.length - 1;
+  while (lo < hi) {
+    final mid = (lo + hi + 1) ~/ 2;
+    if (kLeapSeconds[mid].$1 <= mjd) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return kLeapSeconds[lo].$2.toDouble();
 }
 
 class _RiseSetNoon {
@@ -307,11 +354,12 @@ class _RiseSetNoon {
 
 /// Алгоритм восхода/захода по Мёусу (Ch. 15) + бисекция для уточнения.
 /// Шагаем по JD-суткам с шагом 5 минут, уточняем момент пересечения h₀
-/// бисекцией до ~1 мс.
+/// бисекцией до ~1 мс. [deltaT] используется для перевода JD(UT) в JDE
+/// при вычислении положения Солнца (GAST остаётся функцией UT).
 _RiseSetNoon _computeRiseSetNoon(
-    double jd, double latRad, double lonRadWest, double h0) {
+    double jd, double latRad, double lonRadWest, double h0, double deltaT) {
   double altitude(double instant) {
-    final eq = solar.apparentEquatorial(instant);
+    final eq = solar.apparentEquatorial(instant + deltaT / 86400.0);
     final st = sidereal.apparent(instant) / 86400.0 * 2.0 * math.pi;
     return _eqToAlt(eq.ra, eq.dec, latRad, lonRadWest, st);
   }

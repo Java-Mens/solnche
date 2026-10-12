@@ -9,9 +9,13 @@ abstract class Dut1Source {
   /// Значение DUT1 (секунды) для данного момента [nowUtc].
   double getDut1(DateTime nowUtc);
 
-  /// `true`, если значение получено из актуального источника (таблица IERS,
-  /// встроенная таблица); `false`, если используется приближение UTC ≈ UT1.
+  /// `true`, если источник в принципе содержит данные (не заглушка).
   bool get isPrecise;
+
+  /// `true`, если для момента [nowUtc] доступно фактическое значение
+  /// (а не приближение UTC ≈ UT1). ТЗ §12.3: приложение должно явно
+  /// показывать, используется ли уточнённая поправка.
+  bool isPreciseFor(DateTime nowUtc);
 
   /// Человекочитаемое описание источника (для экрана настроек / о приложении).
   String get description;
@@ -28,16 +32,21 @@ class NoDut1Source implements Dut1Source {
   bool get isPrecise => false;
 
   @override
+  bool isPreciseFor(DateTime nowUtc) => false;
+
+  @override
   String get description => 'UTC ≈ UT1 (поправка недоступна, точность ±0.9 с)';
 }
 
 /// Встроенная таблица DUT1 с линейной интерполяцией.
 ///
-/// Данные генерируются из IERS Bulletin A (см. tool/fetch_dut1.dart) и
+/// Данные генерируются из IERS Bulletin A (см. tool/fetch_dut1.py) и
 /// хранятся в виде пар `(mjd, dut1)`, где mjd — Modified Julian Day.
-/// Если момент выходит за границы таблицы — возвращается 0 и [isPrecise]=false.
+/// Если момент выходит за границы таблицы — возвращается 0 и
+/// [isPreciseFor]=false (индикация пониженной точности, ТЗ §12.5).
 class TableDut1Source implements Dut1Source {
-  /// `[(mjd, dut1), ...]`, отсортировано по mjd.
+  /// `[(mjd, dut1), ...]`, отсортировано по mjd. Дубли mjd кодируют
+  /// мгновенный скачок DUT1 на високосную секунду.
   final List<(double, double)> entries;
 
   const TableDut1Source(this.entries);
@@ -49,6 +58,13 @@ class TableDut1Source implements Dut1Source {
   String get description => entries.isEmpty
       ? 'Встроенная таблица DUT1 (пуста)'
       : 'Встроенная таблица DUT1 (MJD ${entries.first.$1.toStringAsFixed(1)}–${entries.last.$1.toStringAsFixed(1)})';
+
+  @override
+  bool isPreciseFor(DateTime nowUtc) {
+    if (entries.isEmpty) return false;
+    final mjd = _dateTimeToMjd(nowUtc);
+    return mjd >= entries.first.$1 && mjd <= entries.last.$1 + 1.0;
+  }
 
   @override
   double getDut1(DateTime nowUtc) {

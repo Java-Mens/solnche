@@ -221,6 +221,89 @@ void main() {
       expect(diffMs, inInclusiveRange(400, 600)); // ~500 ms
     });
   });
+
+  group('Next-event semantics (ближайшие события)', () {
+    // Владивосток: полдень ~03:00 UTC, восход ~21:2x UTC предыдущих суток,
+    // заход ~08:3x UTC. Раньше приложение показывало уже прошедшие события.
+    final vladivostok = const GeoPoint(lat: 43.1155, lon: 131.8855);
+
+    test('после захода показывается завтрашний заход, а не прошедший', () {
+      final snap = make().compute(vladivostok, DateTime.utc(2026, 10, 12, 12));
+      expect(snap.nextSunsetUtc, isNotNull);
+      expect(snap.nextSunsetUtc!.isAfter(DateTime.utc(2026, 10, 12, 12)),
+          isTrue);
+      expect(snap.nextSunsetUtc!.day, 13);
+    });
+
+    test('до захода показывается сегодняшний заход', () {
+      final snap = make().compute(vladivostok, DateTime.utc(2026, 10, 12, 3));
+      expect(snap.nextSunsetUtc, isNotNull);
+      expect(snap.nextSunsetUtc!.day, 12);
+    });
+
+    test('полудень — ближайший, а не прошедший', () {
+      // 12:00 UTC = 22:00 местного: сегодняшний полдень (03:00 UTC) прошёл.
+      final snap = make().compute(vladivostok, DateTime.utc(2026, 10, 12, 12));
+      expect(snap.solarNoonUtc, isNotNull);
+      expect(snap.solarNoonUtc!.isAfter(DateTime.utc(2026, 10, 12, 12)),
+          isTrue);
+      expect(snap.solarNoonUtc!.day, 13);
+    });
+
+    test('восход никогда не «уходит в прошлое» в течение суток', () {
+      for (var h = 0; h < 24; h += 3) {
+        final now = DateTime.utc(2026, 10, 12, h, 30);
+        final snap = make().compute(vladivostok, now);
+        expect(snap.nextSunriseUtc, isNotNull, reason: 'at $now');
+        // Событие либо в будущем, либо только что прошло (в пределах часа).
+        expect(
+          now.difference(snap.nextSunriseUtc!).inMinutes < 60,
+          isTrue,
+          reason: 'nextSunrise ${snap.nextSunriseUtc} at $now',
+        );
+      }
+    });
+
+    test('Владивосток 12.10.2026: события близки к эталону (ephem)', () {
+      final snap = make().compute(vladivostok, DateTime.utc(2026, 10, 12, 0));
+      // ephem: rise 21:21:39/21:22:50Z, set 08:35:44Z, noon 02:59:02Z
+      int diffSec(DateTime? a, DateTime b) =>
+          a!.difference(b).inMilliseconds.abs() ~/ 1000;
+      expect(diffSec(snap.nextSunsetUtc, DateTime.utc(2026, 10, 12, 8, 35, 44)),
+          lessThan(150));
+      expect(diffSec(snap.solarNoonUtc, DateTime.utc(2026, 10, 12, 2, 59, 2)),
+          lessThan(150));
+      // Восход из окна 12-13 UTC октября — либо 21:2x 12-го, либо 13-го.
+      final rise = snap.nextSunriseUtc!;
+      final riseMinutes = rise.hour * 60 + rise.minute;
+      expect(riseMinutes, inInclusiveRange(21 * 60 + 20, 21 * 60 + 26));
+    });
+  });
+
+  group('ΔT через таблицу високосных секунд', () {
+    test('2026: ΔT = 32.184 + 37 − DUT1', () {
+      // DUT1(2026-10-12) ≈ −0.034 с → ΔT ≈ 69.218 с
+      final dt = SolarCalculator.deltaTFor(
+          DateTime.utc(2026, 10, 12, 12), -0.0341851);
+      expect(dt, closeTo(69.218, 0.01));
+    });
+
+    test('до 2017-01-01 — 36 високосных секунд, после — 37', () {
+      final before = SolarCalculator.deltaTFor(
+          DateTime.utc(2016, 12, 31, 23, 59, 59), 0.1);
+      final after = SolarCalculator.deltaTFor(
+          DateTime.utc(2017, 1, 1, 0, 0, 0), 0.1);
+      expect(before, closeTo(32.184 + 36 - 0.1, 0.01));
+      expect(after, closeTo(32.184 + 37 - 0.1, 0.01));
+    });
+
+    test('до 1972 года — табличная интерполяция astronomia', () {
+      // Около 1900 года ΔT ≈ −3 с (минимум за последние четыре века).
+      final dt = SolarCalculator.deltaTFor(DateTime.utc(1900, 6, 1), 0.0);
+      expect(dt, greaterThan(-6));
+      expect(dt, lessThan(6));
+    });
+  });
 }
 
 int _hoursOfDayMs(DateTime dt) =>
@@ -240,6 +323,8 @@ class _FixedDut1 implements Dut1Source {
   double getDut1(DateTime nowUtc) => seconds;
   @override
   bool get isPrecise => true;
+  @override
+  bool isPreciseFor(DateTime nowUtc) => true;
   @override
   String get description => 'fixed $seconds s';
 }

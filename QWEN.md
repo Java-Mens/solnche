@@ -45,9 +45,31 @@
 - **FR-08..FR-10, FR-12** — OSM-карта и поиск (Nominatim).
 - **FR-20..FR-23** — foreground service + постоянное уведомление.
 - **FR-24..FR-27** — виджет рабочего стола Android.
-- README с инструкциями сборки.
 
-Уже сделано: GitHub Actions (`.github/workflows/release.yml`), `PRIVACY.md`, `LICENSES.md`, `ALGORITHMS.md`.
+Уже сделано: GitHub Actions (`.github/workflows/release.yml`: push →
+сборка + pre-release в Releases), `README.md` с инструкциями сборки,
+`PRIVACY.md`, `LICENSES.md`, `ALGORITHMS.md`.
+
+## Итерация 3 (текущая): точность тика, DUT1 по сети, реалтайм-геолокация
+
+- **FR-02** — тикер выровнен по секундной границе системных часов
+  (`core/time/second_boundary.dart`), интервалы >1 с срабатывают на целых секундах.
+- **FR-07** — видимый статус источника точки A: ручная / отслеживается /
+  «геолокация недоступна» (`pointASourceProvider`).
+- **FR-06/FR-14** — индикация реалтайм-обновления координат:
+  `pointAFixProvider` → «Обновлено ЧЧ:ММ:СС · ±N м · gps», пометка «устарело».
+- **DUT1 по сети (§12.5, §13.3)** — `data/dut1/dut1_sync.dart`:
+  HTTPS-загрузка `finals2000A.daily` с зеркал USNO/OBSPM (TTL кэша 24 ч,
+  SharedPreferences), парсер `finals_daily.dart` (позиции колонок
+  проверены по реальным файлам IERS), слияние с встроенной таблицей
+  (`mergeDut1`, сеть побеждает на совпадающих MJD и расширяет покрытие).
+  Выключается в настройках; офлайн — встроенная таблица.
+- `dut1Provider`/`settingsProvider` вынесены в data-слой; экран настроек —
+  StatefulWidget (мгновенное применение значений) + блок синхронизации DUT1.
+- `main.dart` — `UncontrolledProviderScope` + фоновая синхронизация DUT1 при старте.
+- TODO.md (ТЗ): зафиксировано название СОЛНЦЕМЕР, уточнены формулировки
+  точности (§12.3/§23.3), сквозная нумерация §25.
+- Тесты: 83 (было 68): секундная граница, парсер IERS, кэш-кодек, mergeDut1.
 
 ## Структура (ТЗ §15)
 
@@ -56,30 +78,29 @@ lib/
   main.dart
   core/
     astronomy/     # SolarCalculator: LAT, EoT, UTC-offset, rise/set, DUT1
-    time/          # tick (1 Hz ticker), форматирование ЧЧ:ММ:СС / UTC-offset
+    time/          # секундная граница, форматирование ЧЧ:ММ:СС / UTC-offset
     geo/           # GeoPoint (lat/lon WGS84), парсинг/валидация
   data/
     location/      # LocationRepository + Android platform channel
-    dut1/          # Dut1Provider: встроенная таблица + fallback
-    settings/      # SharedPreferencesRepository
+    dut1/          # таблица IERS + сетевое обновление (dut1_sync, finals_daily)
+    settings/      # SharedPreferencesRepository + settingsProvider
   ui/
     home/          # главный экран: время, смещение, координаты, восход/заход
     compare/       # сравнение A/B с разницей
-    settings/      # интервалы, режим rise/set, DUT1-source
-    widgets/       # переиспользуемые виджеты
-  app.dart         # ProviderScope + MaterialApp + роутинг
+    settings/      # интервалы, режим rise/set, синхронизация DUT1
 ```
 
 ## Сборка и проверка
 
 - `flutter doctor` — должен быть зелёным для Linux и Android toolchain.
 - `flutter pub get`
-- `flutter test` — все юнит-тесты (астрономия, форматирование, парсинг координат).
+- `flutter test` — все юнит-тесты (астрономия, форматирование, парсинг координат, DUT1-сеть).
 - `flutter analyze` — без warning/error.
 - `flutter build linux` — собирает исполняемый файл для GNU/Linux (primary target проверки в этой сессии).
 - Локальные Android-сборки (APK) **не выполняются** в этой итерации по решению пользователя;
   Android SDK установлен в `~/Android/Sdk` (если добавится), но `flutter build apk` локально не запускается.
-- **CI**: `.github/workflows/release.yml` (ручной запуск `workflow_dispatch`) собирает GNU/Linux
+- **CI**: `.github/workflows/release.yml` — при **push** (ветка по умолчанию) и вручную (`workflow_dispatch`)
+  собирает GNU/Linux
   (`tar.gz`) и Android (`apk`, без AAB — Google Play не планируется) и публикует pre-release в
   GitHub Releases; перед сборкой — `flutter analyze` + `flutter test` + проверка на закрытые
   зависимости. Flutter в CI зафиксирован: 3.47.3 stable.

@@ -1,36 +1,44 @@
 package dev.atom42.solntsemer
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 
-class LocationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
+class LocationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
+    EventChannel.StreamHandler, ActivityAware,
+    PluginRegistry.RequestPermissionsResultListener {
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private var context: Context? = null
+    private var activity: Activity? = null
     private var locationManager: LocationManager? = null
     private var eventSink: EventChannel.EventSink? = null
     private var locationListener: LocationListener? = null
     private var isListening = false
+    private var pendingPermissionResult: MethodChannel.Result? = null
 
     companion object {
         private const val CHANNEL_METHOD = "dev.atom42.solntsemer/location"
         private const val CHANNEL_EVENT = "dev.atom42.solntsemer/location_stream"
         private const val PERMISSION_REQUEST_CODE = 1001
     }
+
+    // ── FlutterPlugin ───────────────────────────────────────────────────────
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -51,22 +59,46 @@ class LocationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         locationManager = null
     }
 
+    // ── ActivityAware: доступ к Activity для диалога разрешений ────────────
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        binding.addRequestPermissionsResultListener(this)
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        binding.addRequestPermissionsResultListener(this)
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ): Boolean {
+        if (requestCode != PERMISSION_REQUEST_CODE) return false
+        val result = pendingPermissionResult
+        pendingPermissionResult = null
+        // Ответ приходит из системного диалога — возвращаем актуальный статус.
+        result?.success(checkStatus())
+        return true
+    }
+
+    // ── MethodChannel ──────────────────────────────────────────────────────
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "checkStatus" -> result.success(checkStatus())
-            "requestPermission" -> {
-                // На Android 6+ запрос разрешения делается через Activity, не через Plugin.
-                // Здесь просто возвращаем текущий статус.
-                result.success(checkStatus())
-            }
-            "getLastKnown" -> {
-                val fix = getLastKnown()
-                if (fix != null) {
-                    result.success(fix)
-                } else {
-                    result.success(null)
-                }
-            }
+            "requestPermission" -> requestPermission(result)
+            "getLastKnown" -> result.success(getLastKnown())
             "startUpdates" -> {
                 val intervalMs = call.argument<Int>("intervalMs") ?: 15000
                 startUpdates(intervalMs)
@@ -80,66 +112,117 @@ class LocationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }
     }
 
+    private fun hasPermission(): Boolean {
+        val ctx = context ?: return false
+        val hasFine = ContextCompat.checkSelfPermission(
+            ctx, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            ctx, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        return hasFine || hasCoarse
+    }
+
     private fun checkStatus(): String {
         val lm = locationManager ?: return "unknown"
         if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER) &&
             !lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
             return "service_disabled"
         }
-        val hasFine = ContextCompat.checkSelfPermission(
-            context!!, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(
-            context!!, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        return if (hasFine || hasCoarse) "available" else "permission_denied"
+        return if (hasPermission()) "available" else "permission_denied"
     }
 
+    /**
+     * Показывает системный диалог запроса разрешения (Android 6+).
+     * Результат возвращается через [onRequestPermissionsResult]; если
+     * разрешение уже выдано или Activity недоступна — сразу отдаём статус.
+     */
+    private fun requestPermission(result: MethodChannel.Result) {
+        if (hasPermission()) {
+            result.success(checkStatus())
+            return
+        }
+        val act = activity
+        if (act == null) {
+            result.success(checkStatus())
+            return
+        }
+        pendingPermissionResult = result
+        ActivityCompat.requestPermissions(
+            act,
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ),
+            PERMISSION_REQUEST_CODE
+        )
+    }
+
+    /** Самый свежий из кэшей провайдеров (устаревший кэш фильтруется на стороне Dart). */
     private fun getLastKnown(): Map<String, Any>? {
         val lm = locationManager ?: return null
-        if (ActivityCompat.checkSelfPermission(context!!, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(context!!, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return null
+        if (!hasPermission()) return null
+        val candidates = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER
+        ).mapNotNull { p ->
+            try {
+                lm.getLastKnownLocation(p)
+            } catch (e: SecurityException) {
+                null
+            } catch (e: IllegalArgumentException) {
+                null
+            }
         }
-        val location = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            ?: return null
-        return locationToMap(location)
+        val best = candidates.maxByOrNull { it.time } ?: return null
+        return locationToMap(best)
     }
 
     private fun startUpdates(intervalMs: Int) {
         if (isListening) return
         val lm = locationManager ?: return
-        if (ActivityCompat.checkSelfPermission(context!!, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(context!!, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
+        if (!hasPermission()) return
         locationListener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 eventSink?.success(locationToMap(location))
             }
-            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
             override fun onProviderEnabled(provider: String) {}
             override fun onProviderDisabled(provider: String) {}
         }
+        val listener = locationListener ?: return
+        // Каждый провайдер регистрируем отдельно: при «примерном
+        // местоположении» (только ACCESS_COARSE_LOCATION) GPS-провайдер
+        // бросает SecurityException, но сетевой продолжает работать.
+        var registered = false
         try {
             lm.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 intervalMs.toLong(),
                 0f,
-                locationListener!!,
+                listener,
                 Looper.getMainLooper()
             )
+            registered = true
+        } catch (e: SecurityException) {
+            // нет ACCESS_FINE_LOCATION
+        }
+        try {
             lm.requestLocationUpdates(
                 LocationManager.NETWORK_PROVIDER,
                 intervalMs.toLong(),
                 0f,
-                locationListener!!,
+                listener,
                 Looper.getMainLooper()
             )
-            isListening = true
+            registered = true
         } catch (e: SecurityException) {
-            eventSink?.error("PERMISSION_DENIED", e.message, null)
+            // нет ACCESS_COARSE_LOCATION или провайдер недоступен
+        }
+        isListening = registered
+        if (!registered) {
+            locationListener = null
+            eventSink?.error("PERMISSION_DENIED", "no provider registered", null)
         }
     }
 
@@ -156,11 +239,13 @@ class LocationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             "lat" to location.latitude,
             "lon" to location.longitude,
             "accuracy" to location.accuracy.toDouble(),
-            "timestampMs" to location.time
+            "timestampMs" to location.time,
+            "provider" to (location.provider ?: "")
         )
     }
 
-    // EventChannel.StreamHandler
+    // ── EventChannel.StreamHandler ─────────────────────────────────────────
+
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventSink = events
     }

@@ -1,9 +1,18 @@
-# СОЛНЦЕМЕР (Solntsemer) — ручная сборка и публикация pre-release.
-# Покрывает ТЗ §25 п.4 (github action для сборки APK и GNU/Linux бинарников в releases).
-# Запуск: Actions → «Сборка и pre-release» → Run workflow.
+# СОЛНЦЕМЕР (Solntsemer) — сборка и pre-release.
+#
+# При каждом push в ветку по умолчанию (master-slave; master — на случай
+# переименования): verify (analyze + test) → сборка GNU/Linux и Android APK
+# → публикация в GitHub Releases как pre-release (ТЗ §25 п.4).
+# Релиз «катящийся»: тег и имя файла берутся из pubspec.yaml (v0.1.0),
+# ассеты перезаливаются (clobber), SHA в описании — последнего пуша.
+#
+# Ручной запуск (workflow_dispatch) — то же самое, но с выбором версии,
+# флагов публикации и pre-release.
 name: Сборка и pre-release
 
 on:
+  push:
+    branches: [master-slave, master]
   workflow_dispatch:
     inputs:
       version:
@@ -267,7 +276,8 @@ jobs:
     name: Публикация pre-release
     runs-on: ubuntu-24.04
     needs: [meta, linux, android]
-    if: github.event.inputs.publish == 'true'
+    # push: публиковать всегда; ручной запуск: по флагу publish.
+    if: github.event_name == 'push' || github.event.inputs.publish == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -325,7 +335,8 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
           TAG: ${{ needs.meta.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRERELEASE: ${{ github.event.inputs.prerelease }}
+          # push → всегда pre-release; ручной запуск — по флагу (по умолч. true).
+          PRERELEASE: ${{ github.event.inputs.prerelease || 'true' }}
         run: |
           set -eu
           flags=(--title "СОЛНЦЕМЕР ${TAG}")
