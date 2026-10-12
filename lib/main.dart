@@ -21,6 +21,12 @@ void main() async {
   // не блокируя первый кадр. При выключенной настройке / отсутствии
   // сети тихо остаётся встроенная таблица (ТЗ §20.3).
   unawaited(container.read(dut1SyncProvider.notifier).refreshFromStartup());
+  // Создаём долгоживущие контроллеры уведомления и виджета (ТЗ FR-20..27):
+  // если уведомление было включено в прошлый запуск — служба стартует снова.
+  unawaited(container.read(widgetConfigProvider.notifier).push());
+  // Читаем состояние уведомления после настройки виджета, чтобы пуш
+  // конфигурации не обогнал старт службы.
+  container.read(notificationProvider);
   runApp(
     UncontrolledProviderScope(
       container: container,
@@ -51,6 +57,26 @@ class SolntsemerApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const HomeScreen(),
+      // Биндер оборачивает все экраны, включая новые маршруты, и остаётся
+      // смонтированным, пока приложение живо (в том числе в фоне). Riverpod 3
+      // паузит потоки без активных слушателей — активная подписка здесь
+      // не даёт секундному тикеру остановиться, поэтому уведомление
+      // обновляется каждую секунду и вне главного экрана (ТЗ FR-21).
+      builder: (context, child) => _SystemBinder(child: child),
     );
+  }
+}
+
+class _SystemBinder extends ConsumerWidget {
+  const _SystemBinder({this.child});
+
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Активные подписки на долгоживущие контроллеры (см. комментарий выше).
+    ref.watch(notificationProvider);
+    ref.watch(widgetConfigProvider);
+    return child ?? const SizedBox.shrink();
   }
 }

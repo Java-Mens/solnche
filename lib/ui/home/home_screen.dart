@@ -8,6 +8,7 @@ import '../../core/astronomy/solar_calculator.dart';
 import '../../core/geo/geo_point.dart';
 import '../../core/time/format.dart';
 import '../compare/compare_screen.dart';
+import '../map/map_screen.dart';
 import '../settings/settings_screen.dart';
 import '../providers.dart';
 
@@ -23,6 +24,15 @@ class HomeScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('СОЛНЦЕМЕР'),
         actions: [
+          // ТЗ §14.1 Экран 1: кнопка «карта» (FR-08..FR-10).
+          IconButton(
+            icon: const Icon(Icons.map),
+            tooltip: 'Карта',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MapScreen()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.compare_arrows),
             tooltip: 'Сравнить точки',

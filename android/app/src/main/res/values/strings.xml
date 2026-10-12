@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">СОЛНЦЕМЕР</string>
+    <string name="widget_description">Истинное солнечное время выбранной точки, смещение от UTC и восход/заход</string>
+    <string name="notification_channel_name">Истинное солнечное время</string>
+    <string name="notification_channel_desc">Постоянное уведомление с истинным солнечным временем выбранной точки</string>
+</resources>

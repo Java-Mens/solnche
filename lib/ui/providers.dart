@@ -11,8 +11,11 @@ import '../core/geo/geo_point.dart';
 import '../core/time/second_boundary.dart';
 import '../data/dut1/dut1_provider.dart';
 import '../data/location/location_repository.dart';
+import '../data/notification/notification_repository.dart';
+import '../data/search/nominatim.dart';
 import '../data/settings/settings_provider.dart';
 import '../data/settings/settings_repository.dart';
+import '../data/widget/widget_repository.dart';
 
 // Репозиторий настроек и источник DUT1 вынесены в data-слой
 // (data/settings/settings_provider.dart, data/dut1/dut1_provider.dart) —
@@ -273,4 +276,206 @@ final solarSnapshotBProvider = StreamProvider<SolarSnapshot>((ref) {
     if (point == null) return _emptySnapshot();
     return calc.compute(point, DateTime.now().toUtc());
   });
+});
+
+// ── Постоянное уведомление (ТЗ FR-20..FR-23) ────────────────────────────────
+
+/// Канал уведомлений: на Android — MethodChannel, иначе — заглушка (§17.2).
+final notificationChannelProvider = Provider<NotificationChannel>((ref) {
+  return defaultTargetPlatform == TargetPlatform.android
+      ? AndroidNotificationChannel()
+      : UnsupportedNotificationChannel();
+});
+
+/// Какая точка показывается в уведомлении (ТЗ FR-22).
+final notificationPointProvider =
+    NotifierProvider<NotificationPointNotifier, NotificationPoint>(
+        NotificationPointNotifier.new);
+
+class NotificationPointNotifier extends Notifier<NotificationPoint> {
+  @override
+  NotificationPoint build() => ref.read(settingsProvider).notificationPoint;
+
+  Future<void> setPoint(NotificationPoint p) async {
+    state = p;
+    await ref.read(settingsProvider).setNotificationPoint(p);
+  }
+}
+
+/// Снимок точки, выбранной для уведомления, — тот же секундный поток,
+/// что и на экранах (единый источник значений для UI и уведомления).
+final notificationSnapshotProvider = Provider<AsyncValue<SolarSnapshot>>((ref) {
+  final target = ref.watch(notificationPointProvider);
+  return target == NotificationPoint.pointA
+      ? ref.watch(solarSnapshotProvider)
+      : ref.watch(solarSnapshotBProvider);
+});
+
+/// Управление постоянным уведомлением (ТЗ FR-20..FR-23).
+///
+/// Цепочка «контроллер → снимок → секундный тикер» должна оставаться
+/// активной даже когда ни один экран не смотрит на снимок (пользователь
+/// в настройках): её держит `_SystemBinder` в `main.dart`, а `keepAlive`
+/// страхует от паузы/утилизации в пограничных случаях. Пока включено —
+/// каждую секунду проталкивает актуальные строки (точно те же числа,
+/// что на экране) в foreground service. Если процесс приложения убит,
+/// нативная служба продолжает тикать сама по упрощённой формуле
+/// (SolarTimeService.kt, ТЗ FR-21).
+final notificationProvider =
+    NotifierProvider<NotificationController, bool>(NotificationController.new);
+
+class NotificationController extends Notifier<bool> {
+  @override
+  bool build() {
+    ref.keepAlive();
+    // Ежесекундный пуш в нативную службу: срабатывает при каждом
+    // обновлении снимка выбранной точки (в т.ч. при смене самой точки).
+    ref.listen(notificationSnapshotProvider, (_, next) {
+      next.whenData(_push);
+    });
+    final channel = ref.watch(notificationChannelProvider);
+    final enabled = ref.watch(settingsProvider).notificationEnabled;
+    final effective = enabled && channel.supported;
+    if (effective) {
+      unawaited(_startService());
+    }
+    return effective;
+  }
+
+  NotificationChannel get _channel => ref.read(notificationChannelProvider);
+
+  GeoPoint? get _point {
+    final target = ref.read(notificationPointProvider);
+    return target == NotificationPoint.pointA
+        ? ref.read(pointAProvider)
+        : ref.read(pointBProvider);
+  }
+
+  /// Включает/выключает уведомление. Возвращает итоговое состояние.
+  ///
+  /// ТЗ FR-23: если разрешение `POST_NOTIFICATIONS` не выдано, функция
+  /// уведомлений отключается, приложение работает дальше.
+  Future<bool> setEnabled(bool v) async {
+    if (!_channel.supported) return false;
+    final settings = ref.read(settingsProvider);
+    if (v) {
+      var granted = await _channel.isPermitted();
+      if (!granted) granted = await _channel.requestPermission();
+      if (!granted) {
+        await settings.setNotificationEnabled(false);
+        state = false;
+        return false;
+      }
+      await settings.setNotificationEnabled(true);
+      state = true;
+      await _startService();
+    } else {
+      await settings.setNotificationEnabled(false);
+      state = false;
+      await _channel.stop();
+    }
+    return state;
+  }
+
+  Future<void> _startService() async {
+    final point = _point;
+    final snap = ref.read(notificationSnapshotProvider).value;
+    final title = snap == null ? 'Истинное время: --:--:--' : notificationTitle(snap);
+    final text = snap == null ? 'Смещение: —' : notificationText(snap, point);
+    await _channel.start(
+      title: title,
+      text: text,
+      lat: point?.lat,
+      lon: point?.lon,
+      label: point == null ? null : (point.label.isEmpty ? 'Точка' : point.label),
+    );
+  }
+
+  void _push(SolarSnapshot snap) {
+    if (!state) return;
+    final point = _point;
+    _channel.update(
+      title: notificationTitle(snap),
+      text: notificationText(snap, point),
+      lat: point?.lat,
+      lon: point?.lon,
+      label: point == null ? null : (point.label.isEmpty ? 'Точка' : point.label),
+    );
+  }
+}
+
+// ── Виджет рабочего стола Android (ТЗ FR-24..FR-27) ─────────────────────────
+
+/// Канал виджета: на Android — MethodChannel, иначе — заглушка (§17.2).
+final widgetChannelProvider = Provider<WidgetChannel>((ref) {
+  return defaultTargetPlatform == TargetPlatform.android
+      ? AndroidWidgetChannel()
+      : UnsupportedWidgetChannel();
+});
+
+/// Конфигурация виджета (ТЗ FR-26) + синхронизация с нативной частью.
+final widgetConfigProvider =
+    NotifierProvider<WidgetConfigNotifier, WidgetConfig>(WidgetConfigNotifier.new);
+
+class WidgetConfigNotifier extends Notifier<WidgetConfig> {
+  @override
+  WidgetConfig build() {
+    // Живёт, пока живёт приложение: реагирует на смену точек и DUT1
+    // и проталкивает свежие данные нативному виджету.
+    ref.keepAlive();
+    ref.listen(pointAProvider, (_, _) => push());
+    ref.listen(pointBProvider, (_, _) => push());
+    ref.listen(dut1Provider, (_, _) => push());
+    final s = ref.read(settingsProvider);
+    return WidgetConfig(
+      source: s.widgetPointSource,
+      fixedPoint: s.getWidgetFixedPoint(),
+      showOffset: s.widgetShowOffset,
+      showSun: s.widgetShowSun,
+    );
+  }
+
+  Future<void> setSource(WidgetPointSource source) async {
+    state = state.copyWith(source: source);
+    await ref.read(settingsProvider).setWidgetPointSource(source);
+    await push();
+  }
+
+  Future<void> setFixedPoint(GeoPoint? p) async {
+    state = state.copyWith(fixedPoint: p);
+    await ref.read(settingsProvider).setWidgetFixedPoint(p);
+    await push();
+  }
+
+  Future<void> setShowOffset(bool v) async {
+    state = state.copyWith(showOffset: v);
+    await ref.read(settingsProvider).setWidgetShowOffset(v);
+    await push();
+  }
+
+  Future<void> setShowSun(bool v) async {
+    state = state.copyWith(showSun: v);
+    await ref.read(settingsProvider).setWidgetShowSun(v);
+    await push();
+  }
+
+  /// Протолкнуть текущую конфигурацию и данные точки нативному виджету.
+  Future<void> push() async {
+    final channel = ref.read(widgetChannelProvider);
+    if (!channel.supported) return;
+    await channel.push(buildWidgetPayload(
+      config: state,
+      pointA: ref.read(pointAProvider),
+      pointB: ref.read(pointBProvider),
+      dut1Source: ref.read(dut1Provider),
+      nowUtc: DateTime.now().toUtc(),
+    ));
+  }
+}
+
+// ── Поиск по названию (ТЗ FR-12) ────────────────────────────────────────────
+
+/// Клиент Nominatim с ограничением «не чаще 1 запроса в секунду».
+final nominatimClientProvider = Provider<NominatimClient>((ref) {
+  return NominatimClient();
 });

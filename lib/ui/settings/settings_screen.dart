@@ -1,13 +1,17 @@
 // Copyright (C) 2026 Atom42 and contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/astronomy/solar_calculator.dart';
+import '../../core/geo/geo_point.dart';
 import '../../core/time/format.dart';
 import '../../data/dut1/dut1_source.dart';
 import '../../data/dut1/dut1_sync.dart';
+import '../../data/notification/notification_repository.dart';
+import '../../data/widget/widget_repository.dart';
 import '../providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -18,12 +22,17 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     final sunriseMode = ref.watch(sunriseModeProvider);
     final dut1 = ref.watch(dut1Provider);
     final sync = ref.watch(dut1SyncProvider);
+    final notificationOn = ref.watch(notificationProvider);
+    final notificationPoint = ref.watch(notificationPointProvider);
+    final widgetConfig = ref.watch(widgetConfigProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -79,6 +88,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onTap: () => _showSunriseModeDialog(context),
           ),
           const Divider(),
+          // ── Сетевой поиск (ТЗ FR-12) ───────────────────────────────
+          SwitchListTile(
+            title: const Text('Поиск по названию (Nominatim)'),
+            subtitle: const Text(
+                'Открытые данные OSM · не чаще 1 запроса в секунду · '
+                'только по вашему запросу'),
+            value: settings.searchNetworkEnabled,
+            onChanged: (v) async {
+              await settings.setSearchNetworkEnabled(v);
+              setState(() {});
+            },
+          ),
+          const Divider(),
           // ── DUT1 (ТЗ §12.5: встроенная таблица + обновление по сети) ──
           SwitchListTile(
             title: const Text('Обновлять DUT1 по сети'),
@@ -124,6 +146,86 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               color: dut1.isPrecise ? Colors.green : Colors.orange,
             ),
           ),
+          if (_isAndroid) ...[
+            const Divider(),
+            // ── Постоянное уведомление (ТЗ FR-20..FR-23) ─────────────
+            SwitchListTile(
+              title: const Text('Постоянное уведомление'),
+              subtitle: const Text(
+                  'Показывает истинное время и смещение от UTC выбранной '
+                  'точки; обновляется каждую секунду, пока приложение '
+                  'запущено (foreground service)'),
+              value: notificationOn,
+              onChanged: (v) async {
+                final ok = await ref
+                    .read(notificationProvider.notifier)
+                    .setEnabled(v);
+                if (!ok && v && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          'Разрешение на уведомления не выдано — '
+                          'функция отключена (приложение работает дальше)'),
+                    ),
+                  );
+                }
+                if (mounted) setState(() {});
+              },
+            ),
+            if (notificationOn)
+              ListTile(
+                title: const Text('Точка в уведомлении'),
+                subtitle: Text(notificationPoint == NotificationPoint.pointA
+                    ? 'Точка A (текущее местоположение или ручная)'
+                    : 'Точка B (сравнение)'),
+                leading: const Icon(Icons.notifications_active, size: 20),
+                onTap: () => _showNotificationPointDialog(context),
+              ),
+            const Divider(),
+            // ── Виджет рабочего стола (ТЗ FR-24..FR-27) ─────────────
+            ListTile(
+              title: const Text('Виджет рабочего стола'),
+              subtitle: const Text(
+                  'Добавьте виджет «СОЛНЦЕМЕР» на рабочий стол Android — '
+                  'он покажет истинное время точки. Здесь можно выбрать, '
+                  'какую точку и какие элементы показывать'),
+              leading: const Icon(Icons.widgets, size: 20),
+            ),
+            ListTile(
+              title: const Text('Точка виджета'),
+              subtitle: Text(switch (widgetConfig.source) {
+                WidgetPointSource.pointA => 'Точка A (следует за приложением)',
+                WidgetPointSource.pointB => 'Точка B (сравнение)',
+                WidgetPointSource.fixed => 'Фиксированная точка',
+              }),
+              onTap: () => _showWidgetSourceDialog(context),
+            ),
+            if (widgetConfig.source == WidgetPointSource.fixed)
+              ListTile(
+                title: const Text('Фиксированная точка'),
+                subtitle: Text(widgetConfig.fixedPoint?.toString() ??
+                    'не задана — введите координаты'),
+                onTap: () => _showWidgetFixedPointDialog(context),
+              ),
+            SwitchListTile(
+              title: const Text('Виджет: показывать смещение от UTC'),
+              value: widgetConfig.showOffset,
+              onChanged: (v) async {
+                await ref
+                    .read(widgetConfigProvider.notifier)
+                    .setShowOffset(v);
+                setState(() {});
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Виджет: показывать восход и заход'),
+              value: widgetConfig.showSun,
+              onChanged: (v) async {
+                await ref.read(widgetConfigProvider.notifier).setShowSun(v);
+                setState(() {});
+              },
+            ),
+          ],
           const Divider(),
           const ListTile(
             title: Text('О приложении'),
@@ -132,6 +234,123 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showNotificationPointDialog(BuildContext context) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Точка в уведомлении'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () async {
+              await ref
+                  .read(notificationPointProvider.notifier)
+                  .setPoint(NotificationPoint.pointA);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Точка A — текущее местоположение или ручная'),
+          ),
+          SimpleDialogOption(
+            onPressed: () async {
+              await ref
+                  .read(notificationPointProvider.notifier)
+                  .setPoint(NotificationPoint.pointB);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Точка B — точка сравнения'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showWidgetSourceDialog(BuildContext context) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Какую точку показывает виджет'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () async {
+              await ref
+                  .read(widgetConfigProvider.notifier)
+                  .setSource(WidgetPointSource.pointA);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Точку A — как в приложении (текущее '
+                'местоположение или последняя выбранная)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () async {
+              await ref
+                  .read(widgetConfigProvider.notifier)
+                  .setSource(WidgetPointSource.pointB);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Точку B — точка сравнения'),
+          ),
+          SimpleDialogOption(
+            onPressed: () async {
+              await ref
+                  .read(widgetConfigProvider.notifier)
+                  .setSource(WidgetPointSource.fixed);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Фиксированную точку — задать координаты'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showWidgetFixedPointDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final current =
+        ref.read(widgetConfigProvider).fixedPoint;
+    if (current != null) {
+      controller.text = '${current.lat}, ${current.lon}';
+    }
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Фиксированная точка виджета'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '55.7558, 37.6173',
+            labelText: 'Широта, Долгота',
+          ),
+          keyboardType: const TextInputType.numberWithOptions(
+              decimal: true, signed: true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final p = GeoPoint.tryParse(controller.text);
+              if (p == null) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Некорректные координаты')),
+                );
+                return;
+              }
+              await ref
+                  .read(widgetConfigProvider.notifier)
+                  .setFixedPoint(p);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   Widget _syncIcon(Dut1SyncState sync) {

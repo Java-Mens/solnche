@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Постоянное уведомление (ТЗ FR-20..23, §16.2). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <application
         android:label="СОЛНЦЕМЕР"
         android:name="${applicationName}"
@@ -25,6 +29,29 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Foreground service постоянного уведомления (ТЗ FR-21, §16.3).
+             Тип specialUse: показ времени выбранной точки, не подпадает
+             под типовые категории (location/media/...). -->
+        <service
+            android:name=".SolarTimeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Постоянное отображение истинного солнечного времени выбранной точки (ТЗ FR-21)" />
+        </service>
+        <!-- Виджет рабочего стола (ТЗ FR-24..27). -->
+        <receiver
+            android:name=".SolartimeWidgetProvider"
+            android:exported="false"
+            android:label="СОЛНЦЕМЕР">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/solartime_widget_info" />
+        </receiver>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

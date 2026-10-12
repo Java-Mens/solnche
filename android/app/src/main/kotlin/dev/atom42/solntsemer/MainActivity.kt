@@ -7,5 +7,7 @@ class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(LocationPlugin())
+        flutterEngine.plugins.add(NotificationPlugin())
+        flutterEngine.plugins.add(WidgetPlugin())
     }
 }

@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/astronomy/solar_calculator.dart';
 import '../../core/geo/geo_point.dart';
 import '../dut1/dut1_cache.dart';
+import '../notification/notification_repository.dart';
+import '../widget/widget_repository.dart';
 
 /// Хранение настроек приложения в SharedPreferences.
 class SettingsRepository {
@@ -19,6 +21,13 @@ class SettingsRepository {
   static const _kDut1CacheEntries = 'dut1_cache_entries';
   static const _kDut1CacheAt = 'dut1_cache_fetched_at';
   static const _kDut1CacheSource = 'dut1_cache_source';
+  static const _kSearchNetworkEnabled = 'search_network_enabled';
+  static const _kNotificationEnabled = 'notification_enabled';
+  static const _kNotificationPoint = 'notification_point';
+  static const _kWidgetPointSource = 'widget_point_source';
+  static const _kWidgetFixedPoint = 'widget_fixed_point';
+  static const _kWidgetShowOffset = 'widget_show_offset';
+  static const _kWidgetShowSun = 'widget_show_sun';
 
   final SharedPreferences _prefs;
 
@@ -98,6 +107,69 @@ class SettingsRepository {
         _kDut1CacheAt, fetchedAt.millisecondsSinceEpoch);
     await _prefs.setString(_kDut1CacheSource, source);
   }
+
+  // ── Сетевой поиск по названию (ТЗ FR-12) ─────────────────────────────
+
+  /// Разрешён ли поиск места по названию через Nominatim.
+  /// Пользователь может полностью отключить сетевой поиск; по умолчанию
+  /// включён (сам поиск опционален и запускается вручную).
+  bool get searchNetworkEnabled => _prefs.getBool(_kSearchNetworkEnabled) ?? true;
+
+  Future<void> setSearchNetworkEnabled(bool v) =>
+      _prefs.setBool(_kSearchNetworkEnabled, v);
+
+  // ── Постоянное уведомление (ТЗ FR-20..FR-23) ────────────────────────
+
+  /// Включено ли постоянное уведомление с истинным временем.
+  bool get notificationEnabled => _prefs.getBool(_kNotificationEnabled) ?? false;
+
+  Future<void> setNotificationEnabled(bool v) =>
+      _prefs.setBool(_kNotificationEnabled, v);
+
+  /// Какая точка отображается в уведомлении (ТЗ FR-22).
+  NotificationPoint get notificationPoint {
+    final v = _prefs.getString(_kNotificationPoint);
+    return v == 'b' ? NotificationPoint.pointB : NotificationPoint.pointA;
+  }
+
+  Future<void> setNotificationPoint(NotificationPoint p) =>
+      _prefs.setString(_kNotificationPoint, p == NotificationPoint.pointB ? 'b' : 'a');
+
+  // ── Виджет рабочего стола (ТЗ FR-24..FR-27) ─────────────────────────
+
+  /// Чью точку показывает виджет (ТЗ FR-26).
+  WidgetPointSource get widgetPointSource {
+    final v = _prefs.getString(_kWidgetPointSource);
+    switch (v) {
+      case 'b':
+        return WidgetPointSource.pointB;
+      case 'fixed':
+        return WidgetPointSource.fixed;
+      default:
+        return WidgetPointSource.pointA;
+    }
+  }
+
+  Future<void> setWidgetPointSource(WidgetPointSource s) =>
+      _prefs.setString(_kWidgetPointSource, switch (s) {
+            WidgetPointSource.pointA => 'a',
+            WidgetPointSource.pointB => 'b',
+            WidgetPointSource.fixed => 'fixed',
+          });
+
+  GeoPoint? getWidgetFixedPoint() => _readPoint(_kWidgetFixedPoint);
+
+  Future<void> setWidgetFixedPoint(GeoPoint? p) =>
+      _writePoint(_kWidgetFixedPoint, p);
+
+  bool get widgetShowOffset => _prefs.getBool(_kWidgetShowOffset) ?? true;
+
+  Future<void> setWidgetShowOffset(bool v) =>
+      _prefs.setBool(_kWidgetShowOffset, v);
+
+  bool get widgetShowSun => _prefs.getBool(_kWidgetShowSun) ?? true;
+
+  Future<void> setWidgetShowSun(bool v) => _prefs.setBool(_kWidgetShowSun, v);
 
   GeoPoint? _readPoint(String key) {
     final raw = _prefs.getString(key);

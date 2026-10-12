@@ -7,7 +7,9 @@ plugins {
 android {
     namespace = "dev.atom42.solntsemer"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // NDK не используется: нативного C/C++ кода нет, движок Flutter
+    // поставляется прекомпилированным (строка ndkVersion убрана —
+    // иначе AGP тянет 2+ ГБ NDK без необходимости).
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -30,6 +32,15 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Локальные debug-сборки без NDK: не стрипаем .so
+            // (иначе AGP тянет 2+ ГБ NDK ради llvm-strip).
+            packaging {
+                jniLibs {
+                    keepDebugSymbols += "**/*.so"
+                }
+            }
+        }
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
@@ -46,4 +57,10 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// androidx.core: NotificationCompat/ServiceCompat для постоянного уведомления
+// (ТЗ FR-20..23) и ActivityCompat в LocationPlugin.kt.
+dependencies {
+    implementation("androidx.core:core-ktx:1.17.0")
 }

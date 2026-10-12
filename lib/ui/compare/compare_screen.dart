@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/astronomy/solar_calculator.dart';
 import '../../core/geo/geo_point.dart';
 import '../../core/time/format.dart';
+import '../map/map_screen.dart';
 import '../providers.dart';
 
 class CompareScreen extends ConsumerWidget {
@@ -61,9 +62,26 @@ class CompareScreen extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleMedium),
-                IconButton(
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => _editPoint(context, ref, isA),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Выбор точки на карте (ТЗ FR-09, экран 2).
+                    IconButton(
+                      icon: const Icon(Icons.map, size: 20),
+                      tooltip: 'Выбрать на карте',
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              MapScreen(initialTargetA: isA),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      onPressed: () => _editPoint(context, ref, isA),
+                    ),
+                  ],
                 ),
               ],
             ),

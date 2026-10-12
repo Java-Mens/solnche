@@ -227,6 +227,13 @@ class SolarCalculator {
     return _getDeltaT(
         _yearFractional(nowUtc), dateTimeToJd(nowUtc) + dut1 / 86400.0, dut1);
   }
+
+  /// TAI − UTC (високосные секунды, IERS Bulletin C) на момент [nowUtc].
+  ///
+  /// Нужно нативной части (виджет/уведомление) для самостоятельного
+  /// расчёта ΔT по той же формуле: ΔT = 32.184 + (TAI − UTC) − DUT1.
+  static double? taiMinusUtcFor(DateTime nowUtc) =>
+      _taiMinusUtcFor(dateTimeToJd(nowUtc));
 }
 
 /// Перевод DateTime (UTC) в Julian Day.
